@@ -177,6 +177,39 @@ public class AdminDashboardController {
                 }
                 List<Map<String, Object>> ventasPorTipo = new ArrayList<>(typeMap.values());
 
+                // Ventas Por Día
+                Map<String, Map<String, Object>> dayMap = new TreeMap<>();
+                java.time.LocalDate effectiveStart = startDate != null && !startDate.isBlank() ? java.time.LocalDate.parse(startDate) : java.time.LocalDate.now().minusDays(6);
+                java.time.LocalDate effectiveEnd = endDate != null && !endDate.isBlank() ? java.time.LocalDate.parse(endDate) : java.time.LocalDate.now();
+
+                for (java.time.LocalDate d = effectiveStart; !d.isAfter(effectiveEnd); d = d.plusDays(1)) {
+                        dayMap.put(d.toString(), new HashMap<>(Map.of(
+                                "fecha", d.toString(),
+                                "total", 0,
+                                "aprobadas", 0,
+                                "pendientes", 0,
+                                "rechazadas", 0
+                        )));
+                }
+
+                for (Venta v : all) {
+                        if (v.getCreatedAt() != null) {
+                                String dateStr = v.getCreatedAt().toLocalDate().toString();
+                                if (dayMap.containsKey(dateStr)) {
+                                        Map<String, Object> dStats = dayMap.get(dateStr);
+                                        dStats.put("total", (int) dStats.get("total") + 1);
+                                        if (v.getEstado() == Venta.Estado.APROBADA) {
+                                                dStats.put("aprobadas", (int) dStats.get("aprobadas") + 1);
+                                        } else if (v.getEstado() == Venta.Estado.PENDIENTE) {
+                                                dStats.put("pendientes", (int) dStats.get("pendientes") + 1);
+                                        } else if (v.getEstado() == Venta.Estado.RECHAZADA) {
+                                                dStats.put("rechazadas", (int) dStats.get("rechazadas") + 1);
+                                        }
+                                }
+                        }
+                }
+                List<Map<String, Object>> ventasPorDia = new ArrayList<>(dayMap.values());
+
                 Map<String, Object> response = new HashMap<>();
                 response.put("totalVentas", total);
                 response.put("ventasAprobadas", aprobadas);
@@ -187,6 +220,7 @@ public class AdminDashboardController {
                 response.put("totalVendedores", totalVendedores);
                 response.put("ventasPorCiudad", ventasPorCiudad);
                 response.put("ventasPorTipo", ventasPorTipo);
+                response.put("ventasPorDia", ventasPorDia);
                 response.put("seriales",
                                 Map.of("total", serialTotal, "available", serialDisponibles, "used", serialUsados));
                 response.put("topProductos", topList);

@@ -68,9 +68,7 @@ public class PagoController {
                     Map<String, Object> map = new HashMap<>();
                     map.put("vendedorId", v.getId());
                     map.put("vendedorNombre", v.getNombreCompleto());
-                    map.put("ciudad", (v.getTienda() != null && v.getTienda().getCiudad() != null)
-                            ? v.getTienda().getCiudad().getNombre()
-                            : null);
+                    map.put("ciudad", v.getCiudad() != null ? v.getCiudad().getNombre() : null);
                     map.put("fotoQr", v.getFotoQr());
                     map.put("tallaPolera", v.getTallaPolera());
                     map.put("montoTotal", totalBs);

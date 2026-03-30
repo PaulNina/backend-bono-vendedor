@@ -50,7 +50,7 @@ public class VendedorController {
         } else if (hasSearch) {
             return vendedorRepository.search(search);
         } else if (hasCity) {
-            return vendedorRepository.findByTiendaCiudadNombre(city);
+            return vendedorRepository.findByCiudadNombre(city);
         }
 
         return vendedorRepository.findAll();
@@ -61,8 +61,8 @@ public class VendedorController {
     public Map<String, Long> getCityStats() {
         List<Vendedor> all = vendedorRepository.findByActivoTrue();
         Map<String, Long> stats = all.stream()
-                .filter(v -> v.getTienda() != null && v.getTienda().getCiudad() != null)
-                .collect(Collectors.groupingBy(v -> v.getTienda().getCiudad().getNombre(), Collectors.counting()));
+                .filter(v -> v.getCiudad() != null)
+                .collect(Collectors.groupingBy(v -> v.getCiudad().getNombre(), Collectors.counting()));
         stats.put("Total", (long) all.size());
         return stats;
     }
@@ -87,14 +87,37 @@ public class VendedorController {
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Actualizar vendedor")
-    public ResponseEntity<Vendedor> update(@PathVariable Long id, @RequestBody Vendedor vendedor) {
-        if (!vendedorRepository.existsById(id))
-            return ResponseEntity.notFound().build();
-        vendedor.setId(id);
-        Vendedor saved = vendedorRepository.save(vendedor);
-        auditoriaService.log(getUser(), "VENDEDOR_ACTUALIZADO", 
-            "Vendedor actualizado: " + saved.getNombreCompleto(), "Vendedor", id.toString());
-        return ResponseEntity.ok(saved);
+    public ResponseEntity<Vendedor> update(@PathVariable Long id, @RequestBody Vendedor body) {
+        return vendedorRepository.findById(id).map(v -> {
+            // Solo actualiza los campos que vienen en el body (merge seguro)
+            if (body.getNombreCompleto() != null && !body.getNombreCompleto().isBlank()) {
+                v.setNombreCompleto(body.getNombreCompleto().trim());
+            }
+            if (body.getEmail() != null && !body.getEmail().isBlank()) {
+                v.setEmail(body.getEmail().trim());
+            }
+            if (body.getTelefono() != null) {
+                v.setTelefono(body.getTelefono().trim());
+            }
+            if (body.getCi() != null) {
+                v.setCi(body.getCi().trim());
+            }
+            // Ciudad: actualizar si viene en el body
+            if (body.getCiudad() != null) {
+                v.setCiudad(body.getCiudad());
+            }
+            // Tienda: actualizar si viene en el body (string vacío = borrar)
+            if (body.getTienda() != null) {
+                v.setTienda(body.getTienda().trim().isEmpty() ? null : body.getTienda().trim());
+            }
+            if (body.getTallaPolera() != null && !body.getTallaPolera().isBlank()) {
+                v.setTallaPolera(body.getTallaPolera());
+            }
+            Vendedor saved = vendedorRepository.save(v);
+            auditoriaService.log(getUser(), "VENDEDOR_ACTUALIZADO",
+                "Vendedor actualizado: " + saved.getNombreCompleto(), "Vendedor", id.toString());
+            return ResponseEntity.ok(saved);
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @PatchMapping("/{id}/toggle")

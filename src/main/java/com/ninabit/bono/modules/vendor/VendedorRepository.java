@@ -9,7 +9,8 @@ import java.util.Optional;
 public interface VendedorRepository extends JpaRepository<Vendedor, Long> {
     List<Vendedor> findByActivoTrue();
 
-    List<Vendedor> findByTiendaCiudadNombre(String ciudad);
+    /** Ahora Vendedor.ciudad es FK directa a Ciudad */
+    List<Vendedor> findByCiudadNombre(String ciudad);
 
     Optional<Vendedor> findByEmail(String email);
 
@@ -22,7 +23,7 @@ public interface VendedorRepository extends JpaRepository<Vendedor, Long> {
             "v.telefono LIKE CONCAT('%', :search, '%'))")
     List<Vendedor> search(@Param("search") String search);
 
-    @Query("SELECT v FROM Vendedor v JOIN v.tienda t JOIN t.ciudad c WHERE " +
+    @Query("SELECT v FROM Vendedor v JOIN v.ciudad c WHERE " +
             "LOWER(c.nombre) = LOWER(:ciudad) AND " +
             "(LOWER(v.nombreCompleto) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
             "LOWER(v.email) LIKE LOWER(CONCAT('%', :search, '%')) OR " +

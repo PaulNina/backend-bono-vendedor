@@ -65,7 +65,7 @@ public class VentaController {
                 // Always overwrite with source of truth from Vendedor table
                 v.setVendorName(vendedor.getNombreCompleto());
 
-                v.setStoreName(vendedor.getTienda() != null ? vendedor.getTienda().getNombre() : null);
+                v.setStoreName(vendedor.getTienda());
                 v.setVendorPhone(vendedor.getTelefono());
                 v.setVendorEmail(vendedor.getEmail());
                 v.setVendorCi(vendedor.getCi());
@@ -321,9 +321,7 @@ public class VentaController {
                 .saleDate(fechaVenta)
                 .puntos(totalPuntos)
                 .bonoBs(totalBono)
-                .ciudad((vendedor.getTienda() != null && vendedor.getTienda().getCiudad() != null)
-                        ? vendedor.getTienda().getCiudad().getNombre()
-                        : "Desconocida")
+                .ciudad(vendedor.getCiudad() != null ? vendedor.getCiudad().getNombre() : "Desconocida")
                 .fotoTag(tagPath)
                 .fotoPoliza(polizaPath)
                 .fotoNota(notaPath)

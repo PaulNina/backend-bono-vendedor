@@ -57,8 +57,8 @@ public class UsuarioController {
 
             if (u.getRol() == Usuario.Rol.VENDOR && u.getVendedorId() != null) {
                 Vendedor v = vendedorRepository.findById(u.getVendedorId()).orElse(null);
-                if (v != null && v.getTienda() != null && v.getTienda().getCiudad() != null) {
-                    ciudad = v.getTienda().getCiudad().getNombre();
+                if (v != null && v.getCiudad() != null) {
+                    ciudad = v.getCiudad().getNombre();
                     departamento = cityToDept.getOrDefault(ciudad, "");
                 }
             } else if (u.getCiudad() != null && !u.getCiudad().isEmpty()) {

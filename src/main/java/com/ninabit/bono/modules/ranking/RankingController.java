@@ -30,7 +30,7 @@ public class RankingController {
             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate endDate) {
 
         List<Vendedor> vendedores = (city != null && !city.isBlank())
-                ? vendedorRepository.findByTiendaCiudadNombre(city)
+                ? vendedorRepository.findByCiudadNombre(city)
                 : vendedorRepository.findByActivoTrue();
 
         List<RankEntry> ranking = new ArrayList<>();
@@ -48,10 +48,8 @@ public class RankingController {
             int bonoBs = ventas.stream().mapToInt(Venta::getBonoBs).sum();
 
             if (units > 0 || points > 0) {
-                String tiendaNombre = v.getTienda() != null ? v.getTienda().getNombre() : null;
-                String cityName = (v.getTienda() != null && v.getTienda().getCiudad() != null)
-                        ? v.getTienda().getCiudad().getNombre()
-                        : null;
+                String tiendaNombre = v.getTienda();
+                String cityName = v.getCiudad() != null ? v.getCiudad().getNombre() : null;
                 ranking.add(new RankEntry(0, v.getId(), v.getNombreCompleto(),
                         tiendaNombre, cityName, points, units, bonoBs));
             }

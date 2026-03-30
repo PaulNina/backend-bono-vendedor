@@ -124,7 +124,7 @@ public class TiendaController {
     public ResponseEntity<?> getStats(@PathVariable Long id) {
         return tiendaRepository.findById(id).map(tienda -> {
             List<Vendedor> vendedores = vendedorRepository.findAll().stream()
-                    .filter(v -> v.getTienda() != null && v.getTienda().getId().equals(id))
+                    .filter(v -> v.getTiendaId() != null && v.getTiendaId().equals(id))
                     .collect(Collectors.toList());
 
             List<Long> vendedorIds = vendedores.stream().map(Vendedor::getId).collect(Collectors.toList());
@@ -158,7 +158,9 @@ public class TiendaController {
         if (tienda == null)
             return ResponseEntity.notFound().build();
         return vendedorRepository.findById(vendedorId).map(v -> {
-            v.setTienda(tienda);
+            // Asignar la ciudad de la tienda al vendedor y el nombre como texto libre
+            v.setCiudad(tienda.getCiudad());
+            v.setTienda(tienda.getNombre());
             Vendedor saved = vendedorRepository.save(v);
             auditoriaService.log(getUser(), "TIENDA_VENDEDOR_ASIGNADO", 
                 "Vendedor " + saved.getNombreCompleto() + " asignado a tienda " + tienda.getNombre(), 

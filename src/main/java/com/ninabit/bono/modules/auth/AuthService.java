@@ -3,9 +3,9 @@ package com.ninabit.bono.modules.auth;
 import com.ninabit.bono.modules.auth.dto.AuthResponse;
 import com.ninabit.bono.modules.auth.dto.LoginRequest;
 import com.ninabit.bono.modules.auth.dto.RegisterRequest;
+import com.ninabit.bono.modules.city.Ciudad;
+import com.ninabit.bono.modules.city.CiudadRepository;
 import com.ninabit.bono.modules.configuracion.ConfiguracionGlobalRepository;
-import com.ninabit.bono.modules.tienda.Tienda;
-import com.ninabit.bono.modules.tienda.TiendaRepository;
 import com.ninabit.bono.modules.user.Usuario;
 import com.ninabit.bono.modules.user.UsuarioRepository;
 import com.ninabit.bono.modules.vendor.Vendedor;
@@ -29,7 +29,7 @@ public class AuthService {
         private final JwtUtil jwtUtil;
         private final UsuarioRepository usuarioRepository;
         private final VendedorRepository vendedorRepository;
-        private final TiendaRepository tiendaRepository;
+        private final CiudadRepository ciudadRepository;
         private final PasswordEncoder passwordEncoder;
         private final com.ninabit.bono.modules.email.EmailService emailService;
         private final ConfiguracionGlobalRepository configuracionGlobalRepository;
@@ -66,24 +66,42 @@ public class AuthService {
                                 .map(c -> "true".equalsIgnoreCase(c.getValor()))
                                 .orElse(false);
 
-                // Look up tienda if provided
-                Tienda tienda = null;
-                if (request.getTiendaId() != null) {
-                        tienda = tiendaRepository.findById(request.getTiendaId()).orElse(null);
+                // Buscar ciudad por nombre
+                Ciudad ciudad = null;
+                if (request.getCiudad() != null && !request.getCiudad().isBlank()) {
+                        ciudad = ciudadRepository.findByNombreIgnoreCase(request.getCiudad()).orElse(null);
                 }
 
-                // Create vendor record
+                if (ciudad == null) {
+                        throw new RuntimeException("Es obligatorio seleccionar una ciudad válida.");
+                }
+
+                if (request.getCi() == null || request.getCi().isBlank()) {
+                        throw new RuntimeException("El número de carnet o CI es obligatorio.");
+                }
+
+                if (request.getTelefono() == null || request.getTelefono().isBlank()) {
+                        throw new RuntimeException("El número de teléfono es obligatorio.");
+                }
+
+                if (request.getTienda() == null || request.getTienda().isBlank()) {
+                        throw new RuntimeException("El nombre de la tienda es obligatorio.");
+                }
+
+                // Crear registro de vendedor
                 Vendedor vendedor = Vendedor.builder()
                                 .nombreCompleto(request.getNombreCompleto())
                                 .email(request.getEmail())
-                                .telefono(request.getTelefono())
-                                .tienda(tienda)
+                                .telefono(request.getTelefono().trim())
+                                .ci(request.getCi().trim())
+                                .ciudad(ciudad)
+                                .tienda(request.getTienda().trim())
                                 .activo(autoAprobar)
                                 .pendingApproval(!autoAprobar)
                                 .build();
                 vendedor = vendedorRepository.save(vendedor);
 
-                // Create user account
+                // Crear cuenta de usuario
                 Usuario usuario = Usuario.builder()
                                 .email(request.getEmail())
                                 .password(passwordEncoder.encode(request.getPassword()))

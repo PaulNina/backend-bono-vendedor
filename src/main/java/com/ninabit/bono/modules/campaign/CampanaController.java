@@ -9,8 +9,10 @@ import org.springframework.web.bind.annotation.*;
 
 import com.ninabit.bono.modules.product.Producto;
 import com.ninabit.bono.modules.product.ProductoRepository;
+import com.ninabit.bono.modules.sale.VentaCampanaRepository;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/campaigns")
@@ -21,6 +23,7 @@ public class CampanaController {
     private final CampanaRepository campanaRepository;
     private final CampanaProductoRepository campanaProductoRepository;
     private final ProductoRepository productoRepository;
+    private final VentaCampanaRepository ventaCampanaRepository;
     private final com.ninabit.bono.modules.audit.AuditoriaService auditoriaService;
 
     @GetMapping
@@ -58,6 +61,23 @@ public class CampanaController {
         auditoriaService.log(getUser(), "CAMPANA_ACTUALIZADA", 
             "Campaña actualizada: " + saved.getNombre(), "Campana", id.toString());
         return ResponseEntity.ok(saved);
+    }
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Eliminar campaña (solo si no tiene ventas registradas)")
+    public ResponseEntity<?> delete(@PathVariable Long id) {
+        return campanaRepository.findById(id).map(campana -> {
+            if (ventaCampanaRepository.existsByCampanaId(id)) {
+                return ResponseEntity.status(409)
+                    .body(Map.of("error", "No se puede eliminar: la campaña tiene ventas registradas."));
+            }
+            // Eliminar productos de campaña primero
+            campanaProductoRepository.findByCampanaId(id).forEach(campanaProductoRepository::delete);
+            campanaRepository.delete(campana);
+            auditoriaService.log(getUser(), "CAMPANA_ELIMINADA",
+                "Campaña eliminada: " + campana.getNombre(), "Campana", id.toString());
+            return ResponseEntity.ok(Map.of("message", "Campaña eliminada correctamente"));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/{id}/products")

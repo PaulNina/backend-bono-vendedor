@@ -1,13 +1,13 @@
 package com.ninabit.bono.modules.vendor;
 
+import com.ninabit.bono.modules.city.Ciudad;
+import com.ninabit.bono.modules.city.CiudadRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-
-import com.ninabit.bono.modules.tienda.TiendaRepository;
 import org.springframework.beans.factory.annotation.Value;
 
 @RestController
@@ -17,7 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 public class VendorProfileController {
 
     private final VendedorRepository vendedorRepository;
-    private final TiendaRepository tiendaRepository;
+    private final CiudadRepository ciudadRepository;
 
     @GetMapping
     @Operation(summary = "Obtener mi perfil de vendedor")
@@ -36,7 +36,7 @@ public class VendorProfileController {
             @RequestParam(required = false) String nombreCompleto,
             @RequestParam(required = false) String telefono,
             @RequestParam(required = false) String ciudad,
-            @RequestParam(required = false) Long tiendaId,
+            @RequestParam(required = false) String tienda,
             @RequestParam(required = false) String tallaPolera,
             @RequestParam(required = false) org.springframework.web.multipart.MultipartFile fotoQr) {
 
@@ -48,24 +48,15 @@ public class VendorProfileController {
                 v.setTelefono(telefono.trim());
             }
             if (ciudad != null && !ciudad.isBlank()) {
-                // Si la ciudad cambia o se proporciona un tiendaId, actualizamos la tienda
-                if (tiendaId != null) {
-                    v.setTienda(tiendaRepository.findById(tiendaId).orElse(null));
-                } else if (v.getTienda() != null
-                        && v.getTienda().getCiudad() != null
-                        && !v.getTienda().getCiudad().getNombre().equalsIgnoreCase(ciudad.trim())) {
-                    // Si cambió de ciudad y no envió tienda, limpiar la tienda porque ya no
-                    // pertenece a esa ciudad
-                    v.setTienda(null);
-                }
-            } else if (tiendaId != null) {
-                v.setTienda(tiendaRepository.findById(tiendaId).orElse(null));
+                Ciudad c = ciudadRepository.findByNombreIgnoreCase(ciudad.trim()).orElse(null);
+                v.setCiudad(c);
             }
-
+            if (tienda != null) {
+                v.setTienda(tienda.trim());
+            }
             if (tallaPolera != null && !tallaPolera.isBlank()) {
                 v.setTallaPolera(tallaPolera);
             }
-
             if (fotoQr != null && !fotoQr.isEmpty()) {
                 try {
                     java.io.File dir = new java.io.File(uploadDir);

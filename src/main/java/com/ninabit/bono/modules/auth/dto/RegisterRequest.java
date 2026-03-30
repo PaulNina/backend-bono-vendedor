@@ -8,6 +8,7 @@ public class RegisterRequest {
     private String email;
     private String password;
     private String telefono;
+    private String ci;
     private String ciudad;
-    private Long tiendaId;
+    private String tienda;
 }

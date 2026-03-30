@@ -16,7 +16,7 @@ public class OpenApiConfig {
                                 .info(new Info()
                                                 .title("API Backend - Skyworth Bono Vendedores")
                                                 .description("API REST para el sistema de gestión de bonos, ventas y vendedores de Skyworth.")
-                                                .version("v1.0.0")
+                                                .version("v3.0.0")
                                                 .contact(new Contact()
                                                                 .name("Soporte Técnico Total IT Solutions")
                                                                 .email("info@totalit.com.bo")
