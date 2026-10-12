@@ -59,4 +59,30 @@ public class EmailService {
             throw new RuntimeException("No se pudo enviar el correo con adjunto. Verifica la configuración SMTP.");
         }
     }
+
+    public void sendHtmlEmailWithInlineImage(String to, String subject, String htmlBody, String cid, byte[] imageBytes, String contentType) {
+        try {
+            JavaMailSender mailSender = emailConfigService.createMailSender();
+            jakarta.mail.internet.MimeMessage message = mailSender.createMimeMessage();
+            org.springframework.mail.javamail.MimeMessageHelper helper = new org.springframework.mail.javamail.MimeMessageHelper(
+                    message, true, "UTF-8");
+
+            helper.setFrom(getMailFrom());
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(htmlBody, true); // true indicates HTML
+            
+            if (imageBytes != null && cid != null && contentType != null) {
+                org.springframework.core.io.ByteArrayResource imageSource = new org.springframework.core.io.ByteArrayResource(imageBytes);
+                helper.addInline(cid, imageSource, contentType);
+            }
+
+            mailSender.send(message);
+            log.info("Correo HTML con imagen enviada exitosamente a {}", to);
+        } catch (Exception e) {
+            log.error("Error al enviar correo HTML a {}: {}", to, e.getMessage(), e);
+            // Non-blocking approach: we don't throw an exception here because it could stop a loop of sending emails.
+            // A better way would be returning boolean, but for now we just log it so mass mailing doesn't crash on one failure.
+        }
+    }
 }

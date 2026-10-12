@@ -5,4 +5,5 @@ import java.util.Optional;
 
 public interface CampanaRepository extends JpaRepository<Campana, Long> {
     Optional<Campana> findFirstByActivoTrue();
+    java.util.List<Campana> findAllByOrderByIdDesc();
 }

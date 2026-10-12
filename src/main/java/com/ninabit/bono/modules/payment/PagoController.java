@@ -194,14 +194,23 @@ public class PagoController {
     }
 
     @GetMapping("/my-payments")
-    @PreAuthorize("hasRole('VENDOR')")
+    @PreAuthorize("hasAnyRole('VENDOR', 'ADMIN', 'SUPERVISOR')")
     @Operation(summary = "Ver historial de pagos del vendedor autenticado")
     public ResponseEntity<List<Pago>> getMyPayments(Authentication auth) {
         Usuario usuario = usuarioRepository.findByEmail(auth.getName()).orElse(null);
-        if (usuario == null || usuario.getVendedorId() == null) {
-            return ResponseEntity.badRequest().build();
+        Long vendedorId = null;
+        if (usuario != null && usuario.getVendedorId() != null) {
+            vendedorId = usuario.getVendedorId();
+        } else {
+            Vendedor v = vendedorRepository.findByEmail(auth.getName()).orElse(null);
+            if (v != null) {
+                vendedorId = v.getId();
+            }
         }
-        return ResponseEntity.ok(pagoRepository.findByVendedorIdOrderByFechaDesc(usuario.getVendedorId()));
+        if (vendedorId == null) {
+            return ResponseEntity.ok(List.of());
+        }
+        return ResponseEntity.ok(pagoRepository.findByVendedorIdOrderByFechaDesc(vendedorId));
     }
 
     @GetMapping("/vendor/{vendedorId}")

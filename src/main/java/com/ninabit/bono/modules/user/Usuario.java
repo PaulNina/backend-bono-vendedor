@@ -35,8 +35,12 @@ public class Usuario {
     @Builder.Default
     private boolean activo = true;
 
-    /** City assigned to reviewer-type users */
+    /** City assigned to reviewer/supervisor-type users */
     private String ciudad;
+
+    /** Store ID assigned for store managers or store-level supervisors */
+    @Column(name = "tienda_id")
+    private Long tiendaId;
 
     @Column(name = "reset_password_token", length = 100)
     private String resetPasswordToken;
@@ -45,6 +49,17 @@ public class Usuario {
     private java.time.LocalDateTime resetPasswordTokenExpiry;
 
     public enum Rol {
-        ADMIN, VENDOR, REVIEWER, SUPERVISOR
+        ADMIN_TOTAL,
+        ADMIN,
+        ADMIN_OPERATIVO,
+        SUPERVISOR,
+        REVISOR,
+        REVIEWER,
+        ENCARGADO_TIENDA,
+        VISOR,
+        VISOR_CENTRAL,
+        VENDOR,
+        TECNICO,
+        OPERADOR_BANDEO
     }
 }

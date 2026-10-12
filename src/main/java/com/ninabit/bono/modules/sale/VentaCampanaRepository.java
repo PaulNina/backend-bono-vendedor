@@ -2,6 +2,7 @@ package com.ninabit.bono.modules.sale;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
+import com.ninabit.bono.modules.payment.CommissionReportDTO;
 
 public interface VentaCampanaRepository extends JpaRepository<VentaCampana, Long> {
         List<VentaCampana> findByVentaId(Long ventaId);
@@ -33,7 +34,7 @@ public interface VentaCampanaRepository extends JpaRepository<VentaCampana, Long
                         +
                         "CASE WHEN vc.pago IS NULL THEN 'Pendiente' ELSE 'Pagado' END " +
                         "ORDER BY v.nombreCompleto ASC")
-        List<com.ninabit.bono.modules.payment.CommissionReportDTO> getCommissionReport(
+        List<CommissionReportDTO> getCommissionReport(
                         @org.springframework.data.repository.query.Param("campanaId") Long campanaId,
                         @org.springframework.data.repository.query.Param("ciudad") String ciudad,
                         @org.springframework.data.repository.query.Param("startDate") java.time.LocalDate startDate,
@@ -58,4 +59,15 @@ public interface VentaCampanaRepository extends JpaRepository<VentaCampana, Long
                         @org.springframework.data.repository.query.Param("endDate") java.time.LocalDate endDate);
 
         boolean existsByCampanaId(Long campanaId);
+
+        @org.springframework.data.jpa.repository.Query("SELECT vc FROM VentaCampana vc JOIN vc.venta v WHERE v.vendedorId = :vendedorId AND vc.campana.id = :campanaId")
+        List<VentaCampana> findByVendedorIdAndCampanaId(
+                @org.springframework.data.repository.query.Param("vendedorId") Long vendedorId,
+                @org.springframework.data.repository.query.Param("campanaId") Long campanaId);
+
+        @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(vc.bonoGanado), 0) FROM VentaCampana vc JOIN vc.venta v WHERE v.estado = 'APROBADA' AND vc.pago IS NULL AND (:campanaId = -1L OR vc.campana.id = :campanaId)")
+        int sumPendingBonus(@org.springframework.data.repository.query.Param("campanaId") Long campanaId);
+
+        @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(vc.bonoGanado), 0) FROM VentaCampana vc JOIN vc.venta v WHERE v.estado = 'APROBADA' AND vc.pago IS NOT NULL AND (:campanaId = -1L OR vc.campana.id = :campanaId)")
+        int sumPaidBonus(@org.springframework.data.repository.query.Param("campanaId") Long campanaId);
 }

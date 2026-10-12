@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.*;
-import java.util.stream.Collectors;
+
 import org.springframework.http.ResponseEntity;
 
 @RestController
@@ -23,6 +23,7 @@ public class ReportController {
     private final VentaRepository ventaRepository;
     private final SalesReportService salesReportService;
     private final WeeklyReportJob weeklyReportJob;
+    private final VendorNotificationService vendorNotificationService;
 
     @GetMapping("/weekly")
     @PreAuthorize("hasRole('ADMIN')")
@@ -89,5 +90,29 @@ public class ReportController {
     public ResponseEntity<Map<String, String>> triggerWeeklyJob() {
         weeklyReportJob.generateAndSendWeeklyReports();
         return ResponseEntity.ok(Map.of("message", "Job Semanal disparado manualmente."));
+    }
+
+    @PostMapping(value = "/send-ranking-to-vendors", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Enviar ranking semanal a todos los vendedores con imagen")
+    public ResponseEntity<Map<String, String>> sendRankingToVendors(
+            @RequestParam("asunto") String asunto,
+            @RequestParam("titulo") String titulo,
+            @RequestParam(value = "texto", required = false) String texto,
+            @RequestParam("imagen") org.springframework.web.multipart.MultipartFile imagen,
+            @RequestParam(value = "emails", required = false) List<String> emails) {
+
+        try {
+            vendorNotificationService.sendNotificationToAllActiveVendors(asunto, titulo, texto, imagen, emails);
+        } catch (RuntimeException ex) {
+            // If a dispatch is already running the service throws with a clear message
+            return ResponseEntity.status(409).body(Map.of("message", ex.getMessage()));
+        }
+
+        int count = (emails != null && !emails.isEmpty()) ? emails.size() : -1;
+        String msg = count > 0
+                ? "El envío de correos ha comenzado en segundo plano para " + count + " vendedores seleccionados."
+                : "El envío de correos ha comenzado en segundo plano para todos los vendedores activos.";
+        return ResponseEntity.ok(Map.of("message", msg));
     }
 }

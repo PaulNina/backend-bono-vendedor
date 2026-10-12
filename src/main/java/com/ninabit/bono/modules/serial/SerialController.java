@@ -28,6 +28,7 @@ import com.ninabit.bono.modules.campaign.CampanaProducto;
 import com.ninabit.bono.modules.campaign.CampanaProductoRepository;
 import com.ninabit.bono.modules.sale.Venta;
 import com.ninabit.bono.modules.sale.VentaRepository;
+import com.ninabit.bono.modules.product.ProductoRepository;
 
 @RestController
 @RequestMapping("/serials")
@@ -36,6 +37,7 @@ import com.ninabit.bono.modules.sale.VentaRepository;
 public class SerialController {
 
     private final SerialRepository serialRepository;
+    private final ProductoRepository productoRepository;
     private final CampanaProductoRepository campanaProductoRepository;
     private final VentaRepository ventaRepository;
     private final com.ninabit.bono.modules.audit.AuditoriaService auditoriaService;
@@ -106,21 +108,25 @@ public class SerialController {
                 .map(s -> {
                     Serial.Estado estado = s.getEstado() != null ? s.getEstado() : Serial.Estado.DISPONIBLE;
 
-                    // Determinar si el serial es válido (disponible)
+                    // Determinar si el serial es válido para Bono Vendedor (desacoplado de Cliente Final)
                     boolean yaUsadoEnCampana = s.isBloqueado();
-                    boolean yaUsadoEnEsta = s.getRegistroVendedorId() != null;
-                    boolean estadoUsado = estado == Serial.Estado.USADO;
-                    boolean valido = !yaUsadoEnCampana && !yaUsadoEnEsta && !estadoUsado;
+                    boolean yaUsadoEnVendedor = s.getRegistroVendedorId() != null;
+                    boolean usadoEnCliente = s.getRegistroCompradorId() != null;
+                    boolean valido = !yaUsadoEnCampana && !yaUsadoEnVendedor;
 
                     // Construir mensaje según prioridad
                     String mensaje;
                     if (valido) {
-                        mensaje = "Serial válido y disponible.";
+                        if (usadoEnCliente) {
+                            mensaje = "Serial válido para Bono Vendedor (registrado también en Cliente Final).";
+                        } else {
+                            mensaje = "Serial válido y disponible.";
+                        }
                     } else if (yaUsadoEnCampana) {
                         String motivo = s.getMotivoBloqueo() != null ? s.getMotivoBloqueo()
-                                : "fue utilizado en campañas anteriores";
-                        mensaje = "Serial inválido: " + motivo + ".";
-                    } else if (yaUsadoEnEsta) {
+                                : "fue utilizado en campañas anteriores o restringido";
+                        mensaje = "Este televisor no está habilitado para registro (" + motivo + "). Consulta con tu supervisor si consideras que es un error.";
+                    } else if (yaUsadoEnVendedor) {
                         String fecha = s.getFechaRegistroVendedor() != null
                                 ? s.getFechaRegistroVendedor().toLocalDate().toString()
                                 : "fecha desconocida";
@@ -133,25 +139,28 @@ public class SerialController {
                                 String campanasStr = v.getDetallesCampanas().stream()
                                         .map(vc -> vc.getCampana().getNombre())
                                         .collect(Collectors.joining(", "));
-                                mensaje = "Serial ya fue ocupado en las campañas: " + campanasStr + " en fecha " + fecha
-                                        + ".";
+                                mensaje = "Este televisor ya fue registrado anteriormente (" + campanasStr + ") en fecha " + fecha
+                                        + ". No es posible registrarlo dos veces.";
                             } else {
-                                mensaje = "Serial ya fue ocupado en fecha " + fecha + ".";
+                                mensaje = "Este televisor ya fue registrado anteriormente en fecha " + fecha + ". No es posible registrarlo dos veces.";
                             }
                         } else {
-                            mensaje = "Serial ya fue ocupado en fecha " + fecha + ".";
+                            mensaje = "Este televisor ya fue registrado anteriormente en fecha " + fecha + ". No es posible registrarlo dos veces.";
                         }
                     } else {
-                        mensaje = "Serial no disponible (ya utilizado).";
+                        mensaje = "Serial no disponible para registro.";
                     }
 
                     String estadoStr = yaUsadoEnCampana ? "BLOQUEADO"
-                            : (yaUsadoEnEsta || estadoUsado) ? "USADO"
-                                    : "DISPONIBLE";
+                            : yaUsadoEnVendedor ? "USADO_VENDEDOR"
+                            : usadoEnCliente ? "USADO_CLIENTE"
+                            : "DISPONIBLE";
 
                     Map<String, Object> result = new HashMap<>();
                     result.put("valido", valido);
                     result.put("estado", estadoStr);
+                    result.put("usadoEnClienteFinal", usadoEnCliente);
+                    result.put("usadoEnVendedor", yaUsadoEnVendedor);
                     result.put("productoId", s.getProductoId());
                     result.put("modelo", s.getModelo() != null ? s.getModelo() : "");
                     result.put("producto", s.getProductoNombre() != null ? s.getProductoNombre() : "");
@@ -164,7 +173,7 @@ public class SerialController {
 
                     if (s.getProductoId() != null) {
                         List<CampanaProducto> cpList = campanaProductoRepository
-                                .findByProductoIdAndActivoTrue(s.getProductoId());
+                                .findActiveAndValidByProductoId(s.getProductoId());
                         int sumPuntos = cpList.stream().mapToInt(CampanaProducto::getPuntos).sum();
                         int sumBono = cpList.stream().mapToInt(CampanaProducto::getBonoBs).sum();
 
@@ -201,19 +210,43 @@ public class SerialController {
                     Map<String, Object> err = new HashMap<>();
                     err.put("valido", false);
                     err.put("estado", "NO_ENCONTRADO");
-                    err.put("mensaje", "Serial no encontrado en la base de datos.");
+                    err.put("mensaje", "El número de serie no existe en el sistema. Verifica que esté bien escrito según la etiqueta trasera del televisor.");
                     return ResponseEntity.ok(err);
                 });
     }
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Crear un serial")
-    public Serial create(@RequestBody Serial serial) {
+    @Operation(summary = "Crear un serial individual")
+    public ResponseEntity<?> create(@RequestBody Serial serial) {
+        if (serial.getNumeroSerie() == null || serial.getNumeroSerie().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "El número de serie es obligatorio"));
+        }
+        String cleanSerial = serial.getNumeroSerie().trim().toUpperCase();
+        if (serialRepository.existsByNumeroSerie(cleanSerial)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "El número de serie '" + cleanSerial + "' ya existe en el sistema"));
+        }
+        serial.setNumeroSerie(cleanSerial);
+        if (serial.getEstado() == null) {
+            serial.setEstado(Serial.Estado.DISPONIBLE);
+        }
+
+        // Auto-fill product info if product ID is provided
+        if (serial.getProductoId() != null) {
+            productoRepository.findById(serial.getProductoId()).ifPresent(p -> {
+                if (serial.getModelo() == null || serial.getModelo().isBlank()) {
+                    serial.setModelo(p.getModelo() != null ? p.getModelo() : p.getModeloCodigo());
+                }
+                if (serial.getProductoNombre() == null || serial.getProductoNombre().isBlank()) {
+                    serial.setProductoNombre(p.getNombre());
+                }
+            });
+        }
+
         Serial saved = serialRepository.save(serial);
         auditoriaService.log(getUser(), "SERIAL_CREADO", 
             "Serial individual creado: " + saved.getNumeroSerie(), "Serial", saved.getId().toString());
-        return saved;
+        return ResponseEntity.ok(saved);
     }
 
     @PostMapping("/bulk")
@@ -222,23 +255,95 @@ public class SerialController {
     public Map<String, Object> bulkCreate(@RequestBody List<Serial> seriales) {
         int guardados = 0;
         int omitidos = 0;
+        List<String> omitidosList = new ArrayList<>();
+
         for (Serial s : seriales) {
             String ns = s.getNumeroSerie();
             if (ns == null || ns.isBlank())
                 continue;
-            if (!serialRepository.existsByNumeroSerie(ns)) {
+            String cleanNs = ns.trim().toUpperCase();
+            if (!serialRepository.existsByNumeroSerie(cleanNs)) {
+                s.setNumeroSerie(cleanNs);
                 if (s.getEstado() == null)
                     s.setEstado(Serial.Estado.DISPONIBLE);
+
+                if (s.getProductoId() != null && (s.getModelo() == null || s.getProductoNombre() == null)) {
+                    productoRepository.findById(s.getProductoId()).ifPresent(p -> {
+                        if (s.getModelo() == null || s.getModelo().isBlank()) {
+                            s.setModelo(p.getModelo() != null ? p.getModelo() : p.getModeloCodigo());
+                        }
+                        if (s.getProductoNombre() == null || s.getProductoNombre().isBlank()) {
+                            s.setProductoNombre(p.getNombre());
+                        }
+                    });
+                }
+
                 serialRepository.save(s);
                 guardados++;
             } else {
                 omitidos++;
+                if (omitidosList.size() < 20) {
+                    omitidosList.add(cleanNs);
+                }
             }
         }
         auditoriaService.log(getUser(), "IMPORTACION_SERIALES_BULK", 
             "Importación masiva de seriales: " + guardados + " guardados, " + omitidos + " omitidos", 
             "Serial", null);
-        return Map.of("guardados", guardados, "omitidos", omitidos);
+        return Map.of(
+            "guardados", guardados,
+            "omitidos", omitidos,
+            "omitidosMuestra", omitidosList
+        );
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Actualizar un serial")
+    public ResponseEntity<Serial> update(@PathVariable Long id, @RequestBody SerialUpdateDto payload) {
+        return serialRepository.findById(id).map(existing -> {
+            if (payload.getNumeroSerie() != null && !payload.getNumeroSerie().isBlank())
+                existing.setNumeroSerie(payload.getNumeroSerie());
+            existing.setModelo(payload.getModelo());
+            existing.setProductoId(payload.getProductoId());
+            existing.setProductoNombre(payload.getProductoNombre());
+            existing.setContainer(payload.getContainer());
+            existing.setSeal(payload.getSeal());
+            existing.setHojaRegistro(payload.getHojaRegistro());
+            existing.setInvoice(payload.getInvoice());
+            if (payload.getDateInvoice() != null && !payload.getDateInvoice().isBlank()) {
+                try {
+                    if (payload.getDateInvoice().contains("T")) {
+                        existing.setDateInvoice(java.time.LocalDateTime.parse(payload.getDateInvoice()));
+                    } else {
+                        existing.setDateInvoice(java.time.LocalDate.parse(payload.getDateInvoice()).atStartOfDay());
+                    }
+                } catch (Exception ignored) {}
+            } else {
+                existing.setDateInvoice(null);
+            }
+            if (payload.getEstado() != null) {
+                try { existing.setEstado(Serial.Estado.valueOf(payload.getEstado())); } catch (Exception ignored) {}
+            }
+            if (payload.getBloqueado() != null) existing.setBloqueado(payload.getBloqueado());
+            existing.setMotivoBloqueo(payload.getMotivoBloqueo());
+            Serial saved = serialRepository.save(existing);
+            auditoriaService.log(getUser(), "SERIAL_ACTUALIZADO",
+                "Serial actualizado: " + saved.getNumeroSerie(), "Serial", saved.getId().toString());
+            return ResponseEntity.ok(saved);
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Eliminar un serial")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        return serialRepository.findById(id).map(existing -> {
+            serialRepository.delete(existing);
+            auditoriaService.log(getUser(), "SERIAL_ELIMINADO",
+                "Serial eliminado: " + existing.getNumeroSerie(), "Serial", id.toString());
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     private String getUser() {

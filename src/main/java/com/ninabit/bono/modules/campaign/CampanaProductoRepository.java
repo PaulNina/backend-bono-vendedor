@@ -13,5 +13,14 @@ public interface CampanaProductoRepository extends JpaRepository<CampanaProducto
 
     List<CampanaProducto> findByProductoIdAndActivoTrue(Long productoId);
 
+    @org.springframework.data.jpa.repository.Query("SELECT cp FROM CampanaProducto cp " +
+           "WHERE cp.producto.id = :productoId " +
+           "AND cp.activo = true " +
+           "AND cp.campana.activo = true " +
+           "AND cp.campana.registroHabilitado = true " +
+           "AND (cp.campana.fechaInicio IS NULL OR cp.campana.fechaInicio <= CURRENT_DATE) " +
+           "AND (cp.campana.fechaFin IS NULL OR cp.campana.fechaFin >= CURRENT_DATE)")
+    List<CampanaProducto> findActiveAndValidByProductoId(@org.springframework.data.repository.query.Param("productoId") Long productoId);
+
     Optional<CampanaProducto> findByCampanaIdAndProductoId(Long campanaId, Long productoId);
 }

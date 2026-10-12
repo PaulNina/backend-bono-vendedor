@@ -30,17 +30,16 @@ public class Vendedor {
 
     /**
      * Relación directa con Ciudad (reemplaza tienda_id → tiendas → ciudad_id).
-     * La columna ciudad_id debe existir en la tabla vendedores (ver script SQL de migración).
+     * Puede ser nula si el vendedor aún no tiene asignada una ciudad.
      */
     @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "ciudad_id", nullable = false)
+    @JoinColumn(name = "ciudad_id", nullable = true)
     private Ciudad ciudad;
 
     /**
      * Nombre de tienda como texto libre (ya no FK a tiendas).
-     * La columna tienda debe existir en la tabla vendedores (ver script SQL de migración).
      */
-    @Column(name = "tienda", nullable = false)
+    @Column(name = "tienda")
     private String tienda;
 
     /**

@@ -10,6 +10,10 @@ public interface SerialRepository extends JpaRepository<Serial, Long>, JpaSpecif
 
     // Búsqueda por número de serie (campo nuevo)
     Optional<Serial> findByNumeroSerie(String numeroSerie);
+    Optional<Serial> findByNumeroSerieIgnoreCase(String numeroSerie);
+
+    @Query("SELECT s FROM Serial s WHERE LOWER(REPLACE(REPLACE(REPLACE(s.numeroSerie, '-', ''), ' ', ''), '_', '')) = LOWER(:normalized)")
+    Optional<Serial> findByNormalizedSerial(@org.springframework.data.repository.query.Param("normalized") String normalized);
 
     // Compatibilidad con código existente que busca por campo "serial" (alias)
     default Optional<Serial> findBySerial(String serial) {

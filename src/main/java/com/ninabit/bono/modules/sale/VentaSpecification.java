@@ -8,8 +8,18 @@ import java.util.List;
 
 public class VentaSpecification {
 
+    /**
+     * Filtra ventas por los parámetros dados.
+     * Parámetros extendidos: tiendaId y vendedorId añadidos en §11 Informe Complementario
+     * ("Ventas y revisión: Campaña, categoría, modelo, ciudad, tienda, vendedor y estado").
+     */
     public static Specification<Venta> filterBy(String search, String city, String status, LocalDate startDate,
             LocalDate endDate, Long campanaId, String dateType) {
+        return filterBy(search, city, status, startDate, endDate, campanaId, dateType, null, null);
+    }
+
+    public static Specification<Venta> filterBy(String search, String city, String status, LocalDate startDate,
+            LocalDate endDate, Long campanaId, String dateType, Long tiendaId, Long vendedorId) {
         return (root, query, cb) -> {
             query.distinct(true);
             List<Predicate> predicates = new ArrayList<>();
@@ -31,6 +41,16 @@ public class VentaSpecification {
 
             if (city != null && !city.isBlank() && !city.equalsIgnoreCase("all")) {
                 predicates.add(cb.equal(root.get("ciudad"), city));
+            }
+
+            // Filtro por tienda específica (§11 Informe Complementario)
+            if (tiendaId != null) {
+                predicates.add(cb.equal(root.get("tiendaId"), tiendaId));
+            }
+
+            // Filtro por vendedor específico (§11 Informe Complementario)
+            if (vendedorId != null) {
+                predicates.add(cb.equal(root.get("vendedorId"), vendedorId));
             }
 
             if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
@@ -64,7 +84,8 @@ public class VentaSpecification {
             }
 
             if (campanaId != null) {
-                jakarta.persistence.criteria.Join<Venta, VentaCampana> campanaJoin = root.join("detallesCampanas");
+                jakarta.persistence.criteria.Join<Venta, VentaCampana> campanaJoin = root.join("detallesCampanas",
+                        jakarta.persistence.criteria.JoinType.LEFT);
                 predicates.add(cb.equal(campanaJoin.get("campana").get("id"), campanaId));
             }
 

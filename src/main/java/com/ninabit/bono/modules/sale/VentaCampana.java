@@ -18,6 +18,8 @@ public class VentaCampana {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "venta_id", nullable = false)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     @com.fasterxml.jackson.annotation.JsonIgnore
     private Venta venta;
 
@@ -30,6 +32,14 @@ public class VentaCampana {
 
     @Column(name = "bono_ganado", nullable = false)
     private Integer bonoGanado;
+
+    @Column(name = "puntos_tienda_ganados")
+    @Builder.Default
+    private Integer puntosTiendaGanados = 0;
+
+    @Column(name = "bono_tienda_ganado")
+    @Builder.Default
+    private Integer bonoTiendaGanado = 0;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pago_id")

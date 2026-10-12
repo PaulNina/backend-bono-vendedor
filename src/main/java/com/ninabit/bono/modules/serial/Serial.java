@@ -31,12 +31,16 @@ public class Serial {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "producto_id", insertable = false, updatable = false, foreignKey = @ForeignKey(ConstraintMode.NO_CONSTRAINT))
     @org.hibernate.annotations.NotFound(action = org.hibernate.annotations.NotFoundAction.IGNORE)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     @com.fasterxml.jackson.annotation.JsonIgnore
     private com.ninabit.bono.modules.product.Producto producto;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "registro_vendedor_id", insertable = false, updatable = false, foreignKey = @ForeignKey(ConstraintMode.NO_CONSTRAINT))
     @org.hibernate.annotations.NotFound(action = org.hibernate.annotations.NotFoundAction.IGNORE)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     @com.fasterxml.jackson.annotation.JsonIgnore
     private com.ninabit.bono.modules.sale.Venta registroVendedor;
 
@@ -96,6 +100,22 @@ public class Serial {
     /** Helper: devuelve el numero de serie como "serial" para compatibilidad */
     public String getSerial() {
         return numeroSerie;
+    }
+
+    public boolean isUsadoEnVendedor() {
+        return this.registroVendedorId != null;
+    }
+
+    public boolean isUsadoEnCliente() {
+        return this.registroCompradorId != null;
+    }
+
+    public boolean isDisponibleParaVendedor() {
+        return !this.bloqueado && this.registroVendedorId == null;
+    }
+
+    public boolean isDisponibleParaCliente() {
+        return !this.bloqueado && this.registroCompradorId == null;
     }
 
     @PrePersist

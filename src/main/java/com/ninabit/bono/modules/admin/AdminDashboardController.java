@@ -1,230 +1,253 @@
 package com.ninabit.bono.modules.admin;
 
-import com.ninabit.bono.modules.sale.Venta;
-import com.ninabit.bono.modules.sale.VentaRepository;
-import com.ninabit.bono.modules.serial.SerialRepository;
-import com.ninabit.bono.modules.vendor.VendedorRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
+/**
+ * Dashboard endpoint rewritten to use SQL aggregates (GROUP BY / SUM / COUNT)
+ * instead of loading all Venta entities into the JVM heap.
+ *
+ * PostgreSQL fix: NEVER pass null to JPQL numeric/date params — use sentinels:
+ *   campanaId = -1L  → all campaigns
+ *   ciudad    = ""   → all cities
+ *   startDate / endDate → always real LocalDateTime values
+ */
 @RestController
 @RequestMapping("/admin")
 @RequiredArgsConstructor
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("hasAnyRole('ADMIN', 'ADMIN_TOTAL', 'SUPERVISOR')")
 @Tag(name = "Admin Dashboard")
 public class AdminDashboardController {
 
-        private final VentaRepository ventaRepository;
-        private final VendedorRepository vendedorRepository;
-        private final SerialRepository serialRepository;
+    private final com.ninabit.bono.modules.sale.VentaRepository ventaRepository;
+    private final com.ninabit.bono.modules.vendor.VendedorRepository vendedorRepository;
+    private final com.ninabit.bono.modules.serial.SerialRepository serialRepository;
+    private final com.ninabit.bono.modules.sale.VentaCampanaRepository ventaCampanaRepository;
+    private final com.ninabit.bono.modules.tienda.TiendaRepository tiendaRepository;
+    private final com.ninabit.bono.modules.liquidation.LoteLiquidacionRepository loteLiquidacionRepository;
+    private final com.ninabit.bono.modules.clientcampaign.RegistroClienteRepository registroClienteRepository;
+    private final com.ninabit.bono.modules.clientcampaign.TicketClienteRepository ticketClienteRepository;
 
-        @GetMapping("/dashboard")
-        @Operation(summary = "Estadísticas generales del dashboard")
-        @org.springframework.transaction.annotation.Transactional(readOnly = true)
-        public Map<String, Object> getDashboard(
-                        @org.springframework.web.bind.annotation.RequestParam(required = false) Long campanaId,
-                        @org.springframework.web.bind.annotation.RequestParam(required = false) String ciudad,
-                        @org.springframework.web.bind.annotation.RequestParam(required = false) String startDate,
-                        @org.springframework.web.bind.annotation.RequestParam(required = false) String endDate) {
+    // Epoch start — used as "no lower bound" sentinel for date range
+    private static final LocalDateTime EPOCH_START = LocalDateTime.of(2000, 1, 1, 0, 0);
+    // Far-future date — used as "no upper bound" sentinel
+    private static final LocalDateTime FAR_FUTURE  = LocalDateTime.of(2099, 12, 31, 23, 59, 59);
 
-                List<Venta> all = ventaRepository.findAll();
+    @GetMapping("/dashboard")
+    @Operation(summary = "Estadísticas generales del dashboard")
+    @Transactional(readOnly = true)
+    public Map<String, Object> getDashboard(
+            @RequestParam(required = false) Long campanaId,
+            @RequestParam(required = false) String ciudad,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
 
-                if (campanaId != null) {
-                        all = all.stream().filter(v -> v.getDetallesCampanas() != null &&
-                                        v.getDetallesCampanas().stream()
-                                                        .anyMatch(dc -> campanaId.equals(dc.getCampana().getId())))
-                                        .collect(Collectors.toList());
-                }
+        // ── Sentinel values (never null to avoid PostgreSQL type inference error) ──
+        Long campanaParam = (campanaId != null) ? campanaId : -1L;
+        String ciudadParam = (ciudad == null || ciudad.isBlank() || ciudad.equalsIgnoreCase("all"))
+                ? "" : ciudad.trim();
 
-                if (ciudad != null && !ciudad.isBlank() && !ciudad.equalsIgnoreCase("all")) {
-                        all = all.stream()
-                                        .filter(v -> v.getCiudad() != null
-                                                        && v.getCiudad().trim().equalsIgnoreCase(ciudad.trim()))
-                                        .collect(Collectors.toList());
-                }
+        LocalDateTime startDt = (startDate != null && !startDate.isBlank())
+                ? LocalDate.parse(startDate).atStartOfDay() : EPOCH_START;
+        LocalDateTime endDt = (endDate != null && !endDate.isBlank())
+                ? LocalDate.parse(endDate).atTime(LocalTime.MAX) : FAR_FUTURE;
 
-                if (startDate != null && !startDate.isBlank()) {
-                        java.time.LocalDate start = java.time.LocalDate.parse(startDate);
-                        all = all.stream()
-                                        .filter(v -> v.getCreatedAt() != null
-                                                        && !v.getCreatedAt().toLocalDate().isBefore(start))
-                                        .collect(Collectors.toList());
-                }
+        // ── 1. COUNT by estado ─────────────────────────────────────────────────
+        long total = 0, aprobadas = 0, pendientes = 0, observadas = 0, rechazadas = 0, anuladas = 0;
 
-                if (endDate != null && !endDate.isBlank()) {
-                        java.time.LocalDate end = java.time.LocalDate.parse(endDate);
-                        all = all.stream().filter(
-                                        v -> v.getCreatedAt() != null && !v.getCreatedAt().toLocalDate().isAfter(end))
-                                        .collect(Collectors.toList());
-                }
+        List<Object[]> countRows = (campanaParam == -1)
+            ? ventaRepository.countByEstadoAll(ciudadParam, startDt, endDt)
+            : ventaRepository.countByEstadoByCampana(campanaParam, ciudadParam, startDt, endDt);
 
-                long total = all.size();
-                long aprobadas = all.stream().filter(v -> v.getEstado() == Venta.Estado.APROBADA).count();
-                long pendientes = all.stream().filter(v -> v.getEstado() == Venta.Estado.PENDIENTE).count();
-                long rechazadas = all.stream().filter(v -> v.getEstado() == Venta.Estado.RECHAZADA).count();
-
-                int totalBs = 0;
-                int totalPuntos = 0;
-
-                for (Venta v : all) {
-                        if (v.getEstado() == Venta.Estado.APROBADA) {
-                                if (campanaId != null && v.getDetallesCampanas() != null) {
-                                        // Sum only points and bonuses from the selected campaign
-                                        totalBs += v.getDetallesCampanas().stream()
-                                                        .filter(dc -> campanaId.equals(dc.getCampana().getId()))
-                                                        .mapToInt(dc -> dc.getBonoGanado() != null ? dc.getBonoGanado()
-                                                                        : 0)
-                                                        .sum();
-                                        totalPuntos += v.getDetallesCampanas().stream()
-                                                        .filter(dc -> campanaId.equals(dc.getCampana().getId()))
-                                                        .mapToInt(dc -> dc.getPuntosGanados() != null
-                                                                        ? dc.getPuntosGanados()
-                                                                        : 0)
-                                                        .sum();
-                                } else {
-                                        // Sum globally for the whole sale
-                                        totalBs += v.getBonoBs();
-                                        totalPuntos += v.getPuntos();
-                                }
-                        }
-                }
-
-                long totalVendedores = vendedorRepository.count();
-                long serialTotal = serialRepository.count();
-                long serialDisponibles = serialRepository.countDisponibles();
-                long serialUsados = serialRepository.countUsados();
-
-                // Top productos
-                Map<String, Long> topProductos = all.stream()
-                                .filter(v -> v.getProductModel() != null)
-                                .collect(Collectors.groupingBy(Venta::getProductModel, Collectors.counting()));
-                List<Map<String, Object>> topList = topProductos.entrySet().stream()
-                                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                                .limit(5)
-                                .map(e -> Map.<String, Object>of("model", e.getKey(), "count", e.getValue()))
-                                .collect(Collectors.toList());
-
-                // City stats (ventas por ciudad para el gráfico y la tabla)
-                Map<String, Map<String, Object>> cityMap = new HashMap<>();
-                for (Venta v : all) {
-                        String c = v.getCiudad() != null && !v.getCiudad().isBlank() ? v.getCiudad() : "Otra";
-                        cityMap.putIfAbsent(c, new HashMap<>(Map.of(
-                                        "ciudad", c,
-                                        "total", 0,
-                                        "aprobadas", 0,
-                                        "pendientes", 0,
-                                        "rechazadas", 0,
-                                        "bonusBs", 0)));
-                        Map<String, Object> cStats = cityMap.get(c);
-                        cStats.put("total", (int) cStats.get("total") + 1);
-
-                        if (v.getEstado() == Venta.Estado.APROBADA) {
-                                cStats.put("aprobadas", (int) cStats.get("aprobadas") + 1);
-
-                                int bsToAdd = 0;
-                                if (campanaId != null && v.getDetallesCampanas() != null) {
-                                        bsToAdd = v.getDetallesCampanas().stream()
-                                                        .filter(dc -> campanaId.equals(dc.getCampana().getId()))
-                                                        .mapToInt(dc -> dc.getBonoGanado() != null ? dc.getBonoGanado()
-                                                                        : 0)
-                                                        .sum();
-                                } else {
-                                        bsToAdd = v.getBonoBs();
-                                }
-                                cStats.put("bonusBs", (int) cStats.get("bonusBs") + bsToAdd);
-
-                        } else if (v.getEstado() == Venta.Estado.PENDIENTE) {
-                                cStats.put("pendientes", (int) cStats.get("pendientes") + 1);
-                        } else if (v.getEstado() == Venta.Estado.RECHAZADA) {
-                                cStats.put("rechazadas", (int) cStats.get("rechazadas") + 1);
-                        }
-                }
-                List<Map<String, Object>> ventasPorCiudad = new ArrayList<>(cityMap.values());
-
-                // Ventas por Tipo de Producto
-                Map<String, Map<String, Object>> typeMap = new HashMap<>();
-                for (Venta v : all) {
-                        String t = v.getProductType() != null && !v.getProductType().isBlank() ? v.getProductType()
-                                        : "Otros";
-                        typeMap.putIfAbsent(t, new HashMap<>(Map.of(
-                                        "tipo", t,
-                                        "total", 0,
-                                        "bonusBs", 0)));
-                        Map<String, Object> tStats = typeMap.get(t);
-                        tStats.put("total", (int) tStats.get("total") + 1);
-
-                        if (v.getEstado() == Venta.Estado.APROBADA) {
-                                int bsToAdd = 0;
-                                if (campanaId != null && v.getDetallesCampanas() != null) {
-                                        bsToAdd = v.getDetallesCampanas().stream()
-                                                        .filter(dc -> campanaId.equals(dc.getCampana().getId()))
-                                                        .mapToInt(dc -> dc.getBonoGanado() != null ? dc.getBonoGanado()
-                                                                        : 0)
-                                                        .sum();
-                                } else {
-                                        bsToAdd = v.getBonoBs();
-                                }
-                                tStats.put("bonusBs", (int) tStats.get("bonusBs") + bsToAdd);
-                        }
-                }
-                List<Map<String, Object>> ventasPorTipo = new ArrayList<>(typeMap.values());
-
-                // Ventas Por Día
-                Map<String, Map<String, Object>> dayMap = new TreeMap<>();
-                java.time.LocalDate effectiveStart = startDate != null && !startDate.isBlank() ? java.time.LocalDate.parse(startDate) : java.time.LocalDate.now().minusDays(6);
-                java.time.LocalDate effectiveEnd = endDate != null && !endDate.isBlank() ? java.time.LocalDate.parse(endDate) : java.time.LocalDate.now();
-
-                for (java.time.LocalDate d = effectiveStart; !d.isAfter(effectiveEnd); d = d.plusDays(1)) {
-                        dayMap.put(d.toString(), new HashMap<>(Map.of(
-                                "fecha", d.toString(),
-                                "total", 0,
-                                "aprobadas", 0,
-                                "pendientes", 0,
-                                "rechazadas", 0
-                        )));
-                }
-
-                for (Venta v : all) {
-                        if (v.getCreatedAt() != null) {
-                                String dateStr = v.getCreatedAt().toLocalDate().toString();
-                                if (dayMap.containsKey(dateStr)) {
-                                        Map<String, Object> dStats = dayMap.get(dateStr);
-                                        dStats.put("total", (int) dStats.get("total") + 1);
-                                        if (v.getEstado() == Venta.Estado.APROBADA) {
-                                                dStats.put("aprobadas", (int) dStats.get("aprobadas") + 1);
-                                        } else if (v.getEstado() == Venta.Estado.PENDIENTE) {
-                                                dStats.put("pendientes", (int) dStats.get("pendientes") + 1);
-                                        } else if (v.getEstado() == Venta.Estado.RECHAZADA) {
-                                                dStats.put("rechazadas", (int) dStats.get("rechazadas") + 1);
-                                        }
-                                }
-                        }
-                }
-                List<Map<String, Object>> ventasPorDia = new ArrayList<>(dayMap.values());
-
-                Map<String, Object> response = new HashMap<>();
-                response.put("totalVentas", total);
-                response.put("ventasAprobadas", aprobadas);
-                response.put("ventasPendientes", pendientes);
-                response.put("ventasRechazadas", rechazadas);
-                response.put("totalBonusBs", totalBs);
-                response.put("totalPuntos", totalPuntos);
-                response.put("totalVendedores", totalVendedores);
-                response.put("ventasPorCiudad", ventasPorCiudad);
-                response.put("ventasPorTipo", ventasPorTipo);
-                response.put("ventasPorDia", ventasPorDia);
-                response.put("seriales",
-                                Map.of("total", serialTotal, "available", serialDisponibles, "used", serialUsados));
-                response.put("topProductos", topList);
-
-                return response;
+        for (Object[] row : countRows) {
+            String estado = row[0].toString();
+            long   count  = ((Number) row[1]).longValue();
+            total += count;
+            switch (estado) {
+                case "APROBADA"  -> aprobadas  = count;
+                case "PENDIENTE" -> pendientes = count;
+                case "OBSERVADA" -> observadas = count;
+                case "RECHAZADA" -> rechazadas = count;
+                case "ANULADA"   -> anuladas   = count;
+            }
         }
+
+        // ── 2. SUM bonus & puntos ──────────────────────────────────────────────
+        int totalBs = 0, totalPuntos = 0;
+        List<Object[]> bonusList = (campanaParam == -1)
+            ? ventaRepository.sumBonusAll(ciudadParam, startDt, endDt)
+            : ventaRepository.sumBonusByCampana(campanaParam, ciudadParam, startDt, endDt);
+
+        if (bonusList != null && !bonusList.isEmpty() && bonusList.get(0) != null) {
+            Object[] row = bonusList.get(0);
+            Object val0 = row[0] instanceof Object[] ? ((Object[]) row[0])[0] : row[0];
+            Object val1 = row[1] instanceof Object[] ? ((Object[]) row[1])[0] : row[1];
+            totalBs     = val0 != null ? ((Number) val0).intValue() : 0;
+            totalPuntos = val1 != null ? ((Number) val1).intValue() : 0;
+        }
+
+        int totalBonusPendienteBs = ventaCampanaRepository.sumPendingBonus(campanaParam);
+        int totalBonusPagadoBs = ventaCampanaRepository.sumPaidBonus(campanaParam);
+
+        // ── 3. Entity counts ───────────────────────────────────────────────────
+        long totalVendedores   = vendedorRepository.count();
+        long totalTiendas      = tiendaRepository.count();
+        long serialTotal       = serialRepository.count();
+        long serialDisponibles = serialRepository.countDisponibles();
+        long serialUsados      = serialRepository.countUsados();
+        long lotesTotal        = loteLiquidacionRepository.count();
+        long lotesPagados      = loteLiquidacionRepository.findWithFilters(null, null, com.ninabit.bono.modules.liquidation.LoteLiquidacion.EstadoLote.PAGADO, null).size();
+        long lotesPendientes   = loteLiquidacionRepository.findWithFilters(null, null, com.ninabit.bono.modules.liquidation.LoteLiquidacion.EstadoLote.AUTORIZADO, null).size()
+                + loteLiquidacionRepository.findWithFilters(null, null, com.ninabit.bono.modules.liquidation.LoteLiquidacion.EstadoLote.EN_REVISION, null).size()
+                + loteLiquidacionRepository.findWithFilters(null, null, com.ninabit.bono.modules.liquidation.LoteLiquidacion.EstadoLote.BORRADOR, null).size();
+
+        long totalRegistrosCliente = registroClienteRepository.count();
+        long totalTicketsCliente   = ticketClienteRepository.count();
+
+        // ── 4. City breakdown ─────────────────────────────────────────────────
+        Map<String, Map<String, Object>> cityMap = new LinkedHashMap<>();
+        List<Object[]> cityRows = (campanaParam == -1)
+            ? ventaRepository.groupByCiudadEstadoAll(ciudadParam, startDt, endDt)
+            : ventaRepository.groupByCiudadEstadoByCampana(campanaParam, ciudadParam, startDt, endDt);
+
+        for (Object[] row : cityRows) {
+            String c      = row[0] != null && !row[0].toString().isBlank() ? row[0].toString() : "Otra";
+            String estado = row[1].toString();
+            Object val2 = row[2] instanceof Object[] ? ((Object[]) row[2])[0] : row[2];
+            Object val3 = row[3] instanceof Object[] ? ((Object[]) row[3])[0] : row[3];
+            long   count  = val2 != null ? ((Number) val2).longValue() : 0;
+            int    bonus  = val3 != null ? ((Number) val3).intValue() : 0;
+
+            cityMap.computeIfAbsent(c, k -> new HashMap<>(Map.of(
+                    "ciudad", k, "total", 0L, "aprobadas", 0L,
+                    "pendientes", 0L, "observadas", 0L, "rechazadas", 0L, "bonusBs", 0)));
+            Map<String, Object> cs = cityMap.get(c);
+            cs.put("total", (long) cs.get("total") + count);
+            switch (estado) {
+                case "APROBADA"  -> { cs.put("aprobadas",  (long) cs.get("aprobadas")  + count);
+                                      cs.put("bonusBs",    (int)  cs.get("bonusBs")    + bonus); }
+                case "PENDIENTE" -> cs.put("pendientes", (long) cs.get("pendientes") + count);
+                case "OBSERVADA" -> cs.put("observadas", (long) cs.get("observadas") + count);
+                case "RECHAZADA" -> cs.put("rechazadas", (long) cs.get("rechazadas") + count);
+            }
+        }
+        List<Map<String, Object>> ventasPorCiudad = new ArrayList<>(cityMap.values());
+
+        // ── 5. Product-type breakdown ──────────────────────────────────────────
+        Map<String, Map<String, Object>> typeMap = new LinkedHashMap<>();
+        List<Object[]> typeRows = (campanaParam == -1)
+            ? ventaRepository.groupByTipoEstadoAll(ciudadParam, startDt, endDt)
+            : ventaRepository.groupByTipoEstadoByCampana(campanaParam, ciudadParam, startDt, endDt);
+
+        for (Object[] row : typeRows) {
+            String t      = row[0] != null && !row[0].toString().isBlank() ? row[0].toString() : "Otros";
+            String estado = row[1].toString();
+            Object val2   = row[2] instanceof Object[] ? ((Object[]) row[2])[0] : row[2];
+            Object val3   = row[3] instanceof Object[] ? ((Object[]) row[3])[0] : row[3];
+            long   count  = val2 != null ? ((Number) val2).longValue() : 0;
+            int    bonus  = val3 != null ? ((Number) val3).intValue() : 0;
+
+            typeMap.computeIfAbsent(t, k -> new HashMap<>(Map.of("tipo", k, "total", 0L, "bonusBs", 0)));
+            Map<String, Object> ts = typeMap.get(t);
+            ts.put("total", (long) ts.get("total") + count);
+            if ("APROBADA".equals(estado)) ts.put("bonusBs", (int) ts.get("bonusBs") + bonus);
+        }
+        List<Map<String, Object>> ventasPorTipo = new ArrayList<>(typeMap.values());
+
+        // ── 6. Top 5 products ─────────────────────────────────────────────────
+        List<Map<String, Object>> topList = new ArrayList<>();
+        List<Object[]> topRows = (campanaParam == -1)
+            ? ventaRepository.topProductosAll(ciudadParam, startDt, endDt)
+            : ventaRepository.topProductosByCampana(campanaParam, ciudadParam, startDt, endDt);
+
+        for (int i = 0; i < Math.min(5, topRows.size()); i++) {
+            Object[] row = topRows.get(i);
+            topList.add(Map.of("model", row[0].toString(), "count", ((Number) row[1]).longValue()));
+        }
+
+        // ── 7. Daily breakdown ─────────────────────────────────────────────────
+        Map<String, Map<String, Object>> dayMap = new TreeMap<>();
+        
+        // Use provided dates, else default to last 7 days for the chart ONLY
+        LocalDateTime dayChartStart = (startDate != null && !startDate.isBlank())
+                ? LocalDate.parse(startDate).atStartOfDay() : LocalDate.now().minusDays(6).atStartOfDay();
+        LocalDateTime dayChartEnd = (endDate != null && !endDate.isBlank())
+                ? LocalDate.parse(endDate).atTime(LocalTime.MAX) : LocalDate.now().atTime(LocalTime.MAX);
+        
+        List<Object[]> dayRows = (campanaParam == -1)
+            ? ventaRepository.groupByDayEstadoAll(ciudadParam, dayChartStart, dayChartEnd)
+            : ventaRepository.groupByDayEstadoByCampana(campanaParam, ciudadParam, dayChartStart, dayChartEnd);
+
+        for (Object[] row : dayRows) {
+            String dateStr = row[0].toString();
+            String key = dateStr.length() > 10 ? dateStr.substring(0, 10) : dateStr;
+            String estado  = row[1].toString();
+            long   count   = ((Number) row[2]).longValue();
+            
+            dayMap.computeIfAbsent(key, k -> new HashMap<>(Map.of(
+                    "fecha", k, "total", 0L,
+                    "aprobadas", 0L, "pendientes", 0L, "observadas", 0L, "rechazadas", 0L)));
+            
+            Map<String, Object> ds = dayMap.get(key);
+            ds.put("total", (long) ds.get("total") + count);
+            switch (estado) {
+                case "APROBADA"  -> ds.put("aprobadas",  (long) ds.get("aprobadas")  + count);
+                case "PENDIENTE" -> ds.put("pendientes", (long) ds.get("pendientes") + count);
+                case "OBSERVADA" -> ds.put("observadas", (long) ds.get("observadas") + count);
+                case "RECHAZADA" -> ds.put("rechazadas", (long) ds.get("rechazadas") + count);
+            }
+        }
+
+        LocalDate minD = dayChartStart.toLocalDate();
+        LocalDate maxD = dayChartEnd.toLocalDate();
+        
+        for (LocalDate d = minD; !d.isAfter(maxD); d = d.plusDays(1)) {
+            dayMap.putIfAbsent(d.toString(), new HashMap<>(Map.of(
+                    "fecha", d.toString(), "total", 0L,
+                    "aprobadas", 0L, "pendientes", 0L, "observadas", 0L, "rechazadas", 0L)));
+        }
+        
+        List<Map<String, Object>> ventasPorDia = new ArrayList<>(dayMap.values());
+
+        // ── 8. Assemble response ───────────────────────────────────────────────
+        Map<String, Object> response = new HashMap<>();
+        response.put("totalVentas",              total);
+        response.put("ventasAprobadas",          aprobadas);
+        response.put("ventasPendientes",         pendientes);
+        response.put("ventasObservadas",         observadas);
+        response.put("ventasRechazadas",         rechazadas);
+        response.put("ventasAnuladas",           anuladas);
+        response.put("totalBonusBs",             totalBs);
+        response.put("totalBonusPendienteBs",    totalBonusPendienteBs);
+        response.put("totalBonusPagadoBs",       totalBonusPagadoBs);
+        response.put("totalPuntos",              totalPuntos);
+        response.put("totalVendedores",          totalVendedores);
+        response.put("totalTiendas",             totalTiendas);
+        response.put("lotesLiquidacion",         Map.of(
+                "total", lotesTotal,
+                "pendientes", lotesPendientes,
+                "pagados", lotesPagados));
+        response.put("clienteFinal",             Map.of(
+                "totalRegistros", totalRegistrosCliente,
+                "totalTickets", totalTicketsCliente));
+        response.put("ventasPorCiudad",          ventasPorCiudad);
+        response.put("ventasPorTipo",            ventasPorTipo);
+        response.put("ventasPorDia",             ventasPorDia);
+        response.put("seriales",                 Map.of(
+                "total",     serialTotal,
+                "available", serialDisponibles,
+                "used",      serialUsados));
+        response.put("topProductos",             topList);
+
+        return response;
+    }
 }

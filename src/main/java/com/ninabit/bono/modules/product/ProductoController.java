@@ -42,7 +42,7 @@ public class ProductoController {
             map.put("fechaCreacion", p.getFechaCreacion());
 
             // Buscar campañas activas
-            List<String> campanasActivas = campanaProductoRepository.findByProductoIdAndActivoTrue(p.getId())
+            List<String> campanasActivas = campanaProductoRepository.findActiveAndValidByProductoId(p.getId())
                     .stream()
                     .map(cp -> cp.getCampana().getNombre())
                     .distinct()

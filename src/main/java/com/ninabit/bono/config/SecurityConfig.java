@@ -12,7 +12,6 @@ import org.springframework.security.config.annotation.authentication.configurati
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -42,16 +41,24 @@ public class SecurityConfig {
             "/cities",
             "/cities/active",
             "/campaigns/active", // registration page checks for active campaigns
+            "/campaigns/public", // public active campaigns for landing page
             "/products/active", // sale form needs product list
             "/serials/*/validate", // validate serial availability (used in sale form before login check)
             "/config/public", // public config flags (auto-approve, etc.)
             "/public/popups", // popups shown on landing page without login
+            "/cliente/**", // endpoints públicos de cliente final (landing, validación, tickets, chatbot)
+            "/api/cliente/**",
+            // WhatsApp webhook (Meta requiere acceso sin autenticación)
+            "/webhook/whatsapp",
+            "/webhook/whatsapp/**",
+            "/api/webhook/whatsapp",
+            "/api/webhook/whatsapp/**",
     };
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
-                .csrf(AbstractHttpConfigurer::disable)
+                .csrf(csrf -> csrf.disable())
                 .cors(cors -> {
                 })
                 .authorizeHttpRequests(auth -> auth

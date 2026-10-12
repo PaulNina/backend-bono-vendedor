@@ -34,7 +34,7 @@ public class AuthService {
         private final com.ninabit.bono.modules.email.EmailService emailService;
         private final ConfiguracionGlobalRepository configuracionGlobalRepository;
 
-        @org.springframework.beans.factory.annotation.Value("${app.frontend.url:https://bono.contabol.com}")
+        @org.springframework.beans.factory.annotation.Value("${app.frontend.url:https://bono.skyworth.bo}")
         private String frontendUrl;
 
         public AuthResponse login(LoginRequest request) {

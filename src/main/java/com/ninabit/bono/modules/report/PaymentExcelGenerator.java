@@ -3,7 +3,8 @@ package com.ninabit.bono.modules.report;
 import com.ninabit.bono.modules.payment.CommissionReportDTO;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.util.IOUtils;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.xssf.streaming.SXSSFSheet;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -21,8 +22,10 @@ public class PaymentExcelGenerator {
     public byte[] generatePaymentsReport(List<CommissionReportDTO> reports, boolean withQr,
             String campanaNombre, String ciudad, java.time.LocalDate startDate, java.time.LocalDate endDate,
             String estadoPago) {
-        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            Sheet sheet = workbook.createSheet("Liquidacion_Comisiones");
+        // Usar SXSSFWorkbook para generación ligera en streaming
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(100); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            SXSSFSheet sheet = workbook.createSheet("Liquidacion_Comisiones");
+            sheet.trackAllColumnsForAutoSizing();
 
             // --- Report Metadata Header ---
             CellStyle titleStyle = workbook.createCellStyle();
@@ -128,7 +131,9 @@ public class PaymentExcelGenerator {
                                 anchor.setDx2(-5 * 9525);
                                 anchor.setDy2(-5 * 9525);
 
-                                Picture pict = drawing.createPicture(anchor, pictureIdx);
+                                if (drawing != null) {
+                                    drawing.createPicture(anchor, pictureIdx);
+                                }
                             }
                         }
                     } catch (Exception e) {
@@ -145,9 +150,93 @@ public class PaymentExcelGenerator {
             }
 
             workbook.write(out);
+            workbook.dispose();
             return out.toByteArray();
         } catch (Exception e) {
             throw new RuntimeException("Error al generar el reporte de pagos", e);
+        }
+    }
+
+    public byte[] generateAuditSalesReport(List<com.ninabit.bono.modules.sale.Venta> ventas,
+            java.time.LocalDate startDate, java.time.LocalDate endDate, String ciudad, String estado) {
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(100); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            SXSSFSheet sheet = workbook.createSheet("Auditoria_Ventas");
+            sheet.trackAllColumnsForAutoSizing();
+
+            // Metadata Header
+            CellStyle titleStyle = workbook.createCellStyle();
+            Font titleFont = workbook.createFont();
+            titleFont.setBold(true);
+            titleFont.setFontHeightInPoints((short) 14);
+            titleStyle.setFont(titleFont);
+
+            Row r0 = sheet.createRow(0);
+            Cell c0 = r0.createCell(0);
+            c0.setCellValue("REPORTE GENERAL DE AUDITORÍA DE VENTAS");
+            c0.setCellStyle(titleStyle);
+
+            Row r1 = sheet.createRow(1);
+            r1.createCell(0).setCellValue("Desde:");
+            r1.createCell(1).setCellValue(startDate != null ? startDate.toString() : "N/A");
+            r1.createCell(2).setCellValue("Hasta:");
+            r1.createCell(3).setCellValue(endDate != null ? endDate.toString() : "N/A");
+
+            Row r2 = sheet.createRow(2);
+            r2.createCell(0).setCellValue("Ciudad:");
+            r2.createCell(1).setCellValue(ciudad != null ? ciudad : "Todas");
+            r2.createCell(2).setCellValue("Estado:");
+            r2.createCell(3).setCellValue(estado != null ? estado : "Todos");
+
+            // Header Style
+            CellStyle headerStyle = workbook.createCellStyle();
+            Font headerFont = workbook.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
+            headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
+            headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+            String[] headers = new String[] {
+                "ID", "Serial", "Fecha Venta", "Fecha Registro", "Vendedor", "CI Vendedor", 
+                "Teléfono", "Email", "Tienda", "Ciudad", "Modelo Producto", "Puntos", 
+                "Bono (Bs)", "Estado", "Motivo Rechazo"
+            };
+
+            Row headerRow = sheet.createRow(4);
+            for (int col = 0; col < headers.length; col++) {
+                Cell cell = headerRow.createCell(col);
+                cell.setCellValue(headers[col]);
+                cell.setCellStyle(headerStyle);
+            }
+
+            int rowIdx = 5;
+            for (com.ninabit.bono.modules.sale.Venta v : ventas) {
+                Row row = sheet.createRow(rowIdx++);
+                row.createCell(0).setCellValue(v.getId() != null ? v.getId() : 0);
+                row.createCell(1).setCellValue(v.getSerial() != null ? v.getSerial() : "");
+                row.createCell(2).setCellValue(v.getSaleDate() != null ? v.getSaleDate().toString() : "");
+                row.createCell(3).setCellValue(v.getCreatedAt() != null ? v.getCreatedAt().toString() : "");
+                row.createCell(4).setCellValue(v.getVendorName() != null ? v.getVendorName() : "");
+                row.createCell(5).setCellValue(v.getVendorCi() != null ? v.getVendorCi() : "");
+                row.createCell(6).setCellValue(v.getVendorPhone() != null ? v.getVendorPhone() : "");
+                row.createCell(7).setCellValue(v.getVendorEmail() != null ? v.getVendorEmail() : "");
+                row.createCell(8).setCellValue(v.getStoreName() != null ? v.getStoreName() : "");
+                row.createCell(9).setCellValue(v.getCiudad() != null ? v.getCiudad() : "");
+                row.createCell(10).setCellValue(v.getProductModel() != null ? v.getProductModel() : "");
+                row.createCell(11).setCellValue(v.getPuntos() != null ? v.getPuntos() : 0);
+                row.createCell(12).setCellValue(v.getBonoBs() != null ? v.getBonoBs() : 0);
+                row.createCell(13).setCellValue(v.getEstado() != null ? v.getEstado().name() : "");
+                row.createCell(14).setCellValue(v.getMotivoRechazo() != null ? v.getMotivoRechazo() : "");
+            }
+
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(out);
+            workbook.dispose();
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("Error al generar el reporte de auditoría de ventas", e);
         }
     }
 

@@ -2,7 +2,7 @@ package com.ninabit.bono.modules.report;
 
 import com.ninabit.bono.modules.sale.Venta;
 import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -16,7 +16,8 @@ public class SalesExcelGenerator {
 
     public byte[] generateWeeklySalesReport(List<Venta> sales, Long campanaId, java.time.LocalDate start,
             java.time.LocalDate end, String subjectTarget) {
-        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+        // SXSSFWorkbook with window size 100 to prevent Java Heap Space OOM
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(100); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("Reporte_Ventas");
 
             // --- Report Metadata Header ---
@@ -144,6 +145,7 @@ public class SalesExcelGenerator {
             }
 
             workbook.write(out);
+            workbook.dispose();
             return out.toByteArray();
         } catch (Exception e) {
             throw new RuntimeException("Error al generar el reporte en Excel", e);

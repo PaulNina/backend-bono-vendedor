@@ -31,8 +31,28 @@ public class Venta {
     @Column(name = "vendor_name")
     private String vendorName;
 
-    @Transient
+    @Column(name = "tienda_id")
+    private Long tiendaId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tienda_id", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private com.ninabit.bono.modules.tienda.Tienda tienda;
+
+    @Column(name = "store_name")
     private String storeName;
+
+    @Column(name = "store_code", length = 50)
+    private String storeCode;
+
+    @Column(name = "store_city", length = 100)
+    private String storeCity;
+
+    @Column(name = "store_department", length = 100)
+    private String storeDepartment;
+
+    @Column(name = "store_channel", length = 50)
+    private String storeChannel;
 
     @Transient
     private String vendorPhone;
@@ -71,6 +91,14 @@ public class Venta {
     @Builder.Default
     private Integer bonoBs = 0;
 
+    @Column(name = "bono_bs_tienda")
+    @Builder.Default
+    private Integer bonoBsTienda = 0;
+
+    @Column(name = "puntos_tienda")
+    @Builder.Default
+    private Integer puntosTienda = 0;
+
     private String ciudad;
 
     @Column(name = "foto_tag")
@@ -85,6 +113,24 @@ public class Venta {
     @Column(name = "motivo_rechazo")
     private String motivoRechazo;
 
+    @Column(name = "historial_rechazos", columnDefinition = "TEXT")
+    private String historialRechazos;
+
+    @Column(name = "motivo_observacion", columnDefinition = "TEXT")
+    private String motivoObservacion;
+
+    @Column(name = "archivos_observados", length = 150)
+    private String archivosObservados;
+
+    @Column(name = "evidencias_anteriores", columnDefinition = "TEXT")
+    private String evidenciasAnteriores;
+
+    @Column(name = "fecha_observacion")
+    private LocalDateTime fechaObservacion;
+
+    @Column(name = "fecha_subsanacion")
+    private LocalDateTime fechaSubsanacion;
+
     @Column(name = "fecha_revision")
     private LocalDateTime fechaRevision;
 
@@ -93,6 +139,8 @@ public class Venta {
 
     @OneToMany(mappedBy = "venta", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     @com.fasterxml.jackson.annotation.JsonIgnore
     private java.util.List<VentaCampana> detallesCampanas = new java.util.ArrayList<>();
 
@@ -104,9 +152,23 @@ public class Venta {
         if (this.createdAt == null) {
             this.createdAt = LocalDateTime.now();
         }
+        if (this.bonoBsTienda == null) {
+            this.bonoBsTienda = 0;
+        }
+        if (this.puntosTienda == null) {
+            this.puntosTienda = 0;
+        }
+    }
+
+    public Integer getBonoBsTienda() {
+        return bonoBsTienda != null ? bonoBsTienda : 0;
+    }
+
+    public Integer getPuntosTienda() {
+        return puntosTienda != null ? puntosTienda : 0;
     }
 
     public enum Estado {
-        PENDIENTE, APROBADA, RECHAZADA, CERRADA
+        REGISTRADA, PENDIENTE, OBSERVADA, APROBADA, RECHAZADA, ANULADA, CERRADA
     }
 }

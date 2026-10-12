@@ -54,6 +54,14 @@ public class EmailConfigService {
             props.put("mail.smtp.starttls.enable", "true");
         }
 
+        // ── Timeouts para evitar que el hilo se congele si el SMTP no responde ──
+        // Tiempo máximo para establecer conexión TCP con el servidor SMTP (ms)
+        props.put("mail.smtp.connectiontimeout", "10000"); // 10 segundos
+        // Tiempo máximo de espera de respuesta del servidor SMTP tras enviar datos (ms)
+        props.put("mail.smtp.timeout", "10000");           // 10 segundos
+        // Tiempo máximo para cmd EHLO/HELO inicial (ms)
+        props.put("mail.smtp.writetimeout", "10000");      // 10 segundos
+
         return mailSender;
     }
 }
