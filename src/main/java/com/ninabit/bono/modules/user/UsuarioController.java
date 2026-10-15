@@ -82,6 +82,7 @@ public class UsuarioController {
             map.put("email", u.getEmail());
             map.put("nombreCompleto", u.getNombreCompleto() != null ? u.getNombreCompleto() : "");
             map.put("rol", u.getRol().name());
+            map.put("roles", u.getRoles().stream().map(Enum::name).collect(Collectors.toList()));
             map.put("ciudad", ciudad);
             map.put("departamento", departamento);
             map.put("tiendaId", u.getTiendaId());
@@ -93,26 +94,46 @@ public class UsuarioController {
     /** POST /users/roles — asignar rol a un usuario por email */
     @PostMapping("/users/roles")
     @PreAuthorize("hasAnyRole('ADMIN', 'ADMIN_TOTAL')")
-    @Operation(summary = "Asignar o cambiar rol a un usuario")
-    public ResponseEntity<?> assignRole(@RequestBody Map<String, String> body) {
-        String email = body.get("email");
-        String rol = body.get("rol");
-        String ciudad = body.get("ciudad");
-        String nombreCompleto = body.get("nombreCompleto");
-        String tiendaIdStr = body.get("tiendaId");
+    @Operation(summary = "Asignar o cambiar roles a un usuario")
+    public ResponseEntity<?> assignRole(@RequestBody Map<String, Object> body) {
+        String email = body.get("email") != null ? body.get("email").toString().trim() : null;
+        String singleRol = body.get("rol") != null ? body.get("rol").toString().trim() : null;
+        String ciudad = body.get("ciudad") != null ? body.get("ciudad").toString().trim() : null;
+        String nombreCompleto = body.get("nombreCompleto") != null ? body.get("nombreCompleto").toString().trim() : null;
+        String tiendaIdStr = body.get("tiendaId") != null ? body.get("tiendaId").toString().trim() : null;
+        String password = body.get("password") != null ? body.get("password").toString().trim() : null;
 
-        if (email == null || rol == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Email y rol son obligatorios"));
+        java.util.Set<Usuario.Rol> rolesSet = new java.util.HashSet<>();
+        Object rolesObj = body.get("roles");
+        if (rolesObj instanceof java.util.Collection<?> col) {
+            for (Object item : col) {
+                if (item != null) {
+                    try {
+                        rolesSet.add(Usuario.Rol.valueOf(item.toString().trim().toUpperCase()));
+                    } catch (IllegalArgumentException ignored) {}
+                }
+            }
+        } else if (rolesObj instanceof String str && !str.isBlank()) {
+            for (String part : str.split(",")) {
+                try {
+                    rolesSet.add(Usuario.Rol.valueOf(part.trim().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {}
+            }
         }
 
-        Usuario.Rol newRol;
-        try {
-            newRol = Usuario.Rol.valueOf(rol.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Rol inválido: " + rol));
+        if (rolesSet.isEmpty() && singleRol != null && !singleRol.isBlank()) {
+            try {
+                rolesSet.add(Usuario.Rol.valueOf(singleRol.trim().toUpperCase()));
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Rol inválido: " + singleRol));
+            }
         }
 
-        String password = body.get("password");
+        if (email == null || rolesSet.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Email y al menos un rol son obligatorios"));
+        }
+
+        Usuario.Rol newRol = rolesSet.iterator().next();
 
         Usuario u = usuarioRepository.findByEmail(email).orElse(null);
         if (u == null) {
@@ -125,6 +146,7 @@ public class UsuarioController {
                     .ciudad(ciudad != null ? ciudad : "")
                     .activo(true)
                     .build();
+            u.setRoles(rolesSet);
 
             if (tiendaIdStr != null && !tiendaIdStr.isBlank() && !tiendaIdStr.equalsIgnoreCase("null")) {
                 try {
@@ -132,7 +154,7 @@ public class UsuarioController {
                 } catch (NumberFormatException ignored) {}
             }
 
-            if (newRol == Usuario.Rol.VENDOR) {
+            if (rolesSet.contains(Usuario.Rol.VENDOR)) {
                 final String finalCiudad = ciudad;
                 final String finalNombre = nombreCompleto;
                 Vendedor v = vendedorRepository.findByEmail(email.trim().toLowerCase())
@@ -160,16 +182,17 @@ public class UsuarioController {
 
             Usuario saved = usuarioRepository.save(u);
             auditoriaService.log(getUser(), "USUARIO_CREADO",
-                "Usuario creado con rol " + newRol + ": " + email, "Usuario", saved.getId().toString());
+                "Usuario creado con roles " + saved.getRoles() + ": " + email, "Usuario", saved.getId().toString());
             return ResponseEntity.ok(Map.of(
                     "id", saved.getId(),
                     "email", saved.getEmail(),
                     "rol", saved.getRol().name(),
+                    "roles", saved.getRoles().stream().map(Enum::name).collect(Collectors.toList()),
                     "message", "Usuario creado exitosamente"
             ));
         } else {
             u.setActivo(true);
-            u.setRol(newRol);
+            u.setRoles(rolesSet);
             if (nombreCompleto != null && !nombreCompleto.isBlank()) {
                 u.setNombreCompleto(nombreCompleto.trim());
             }
@@ -238,11 +261,12 @@ public class UsuarioController {
             }
             Usuario saved = usuarioRepository.save(u);
             auditoriaService.log(getUser(), "USUARIO_ROL_ASIGNADO", 
-                "Rol " + newRol + " asignado a " + email, "Usuario", saved.getId().toString());
+                "Roles " + saved.getRoles() + " asignados a " + email, "Usuario", saved.getId().toString());
             return ResponseEntity.ok(Map.of(
                     "id", saved.getId(),
                     "email", saved.getEmail(),
                     "rol", saved.getRol().name(),
+                    "roles", saved.getRoles().stream().map(Enum::name).collect(Collectors.toList()),
                     "message", "Usuario actualizado exitosamente"
             ));
         }

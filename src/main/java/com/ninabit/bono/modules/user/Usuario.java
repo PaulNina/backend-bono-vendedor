@@ -25,6 +25,42 @@ public class Usuario {
     @Column(nullable = false)
     private Rol rol;
 
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "usuario_roles", joinColumns = @JoinColumn(name = "usuario_id"))
+    @Column(name = "rol")
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    private java.util.Set<Rol> roles = new java.util.HashSet<>();
+
+    public java.util.Set<Rol> getRoles() {
+        if (roles == null) {
+            roles = new java.util.HashSet<>();
+        }
+        if (roles.isEmpty() && rol != null) {
+            roles.add(rol);
+        }
+        return roles;
+    }
+
+    public void setRoles(java.util.Set<Rol> newRoles) {
+        if (newRoles != null) {
+            this.roles = new java.util.HashSet<>(newRoles);
+            if (!this.roles.isEmpty() && (this.rol == null || !this.roles.contains(this.rol))) {
+                this.rol = this.roles.iterator().next();
+            }
+        } else {
+            this.roles = new java.util.HashSet<>();
+        }
+    }
+
+    public void setRol(Rol rol) {
+        this.rol = rol;
+        if (rol != null) {
+            if (this.roles == null) this.roles = new java.util.HashSet<>();
+            this.roles.add(rol);
+        }
+    }
+
     @Column(name = "nombre_completo")
     private String nombreCompleto;
 

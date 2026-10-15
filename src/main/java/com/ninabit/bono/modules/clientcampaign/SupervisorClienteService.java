@@ -34,6 +34,10 @@ public class SupervisorClienteService {
     private final RegistroClienteRepository registroClienteRepository;
     private final TicketClienteRepository ticketClienteRepository;
     private final EntregaRuletaRepository entregaRuletaRepository;
+    private final InventarioImpulsadorRepository inventarioImpulsadorRepository;
+    private final CampanaClienteRepository campanaClienteRepository;
+    private final CampanaClienteProductoRepository campanaClienteProductoRepository;
+    private final com.ninabit.bono.modules.serial.SerialRepository serialRepository;
     private final AuditoriaService auditoriaService;
     private final com.ninabit.bono.modules.whatsapp.service.WhatsAppService whatsAppService;
     private final com.ninabit.bono.modules.email.EmailService emailService;
@@ -139,6 +143,13 @@ public class SupervisorClienteService {
 
         // Obtener códigos de tickets reales asignados al cliente
         List<TicketCliente> tickets = ticketClienteRepository.findByRegistroClienteId(registroId);
+
+        // Si el registro no tenía tickets generados previamente, generarlos y habilitarlos ahora mismo
+        if (tickets == null || tickets.isEmpty()) {
+            tickets = generarTicketsParaRegistro(saved, TicketCliente.EstadoTicket.HABILITADO);
+            ticketsHabilitados = tickets.size();
+        }
+
         String numerosTicketStr = tickets != null ? tickets.stream()
                 .map(TicketCliente::getCodigoTicket)
                 .filter(Objects::nonNull)
@@ -152,13 +163,14 @@ public class SupervisorClienteService {
                 registroId.toString()
         );
 
-        // Campo 4 de la plantilla de WhatsApp: cantidad y códigos de ticket asignados (solo en template de aprobación)
-        String campo4Tickets = String.valueOf(ticketsHabilitados);
-        if (!numerosTicketStr.isBlank()) {
-            campo4Tickets = ticketsHabilitados == 1
-                    ? "1 (Ticket: " + numerosTicketStr + ")"
-                    : ticketsHabilitados + " (Tickets: " + numerosTicketStr + ")";
-        }
+        // Parámetro 4 de WhatsApp: Enviar los códigos reales de tickets generados
+        String campo4Tickets = !numerosTicketStr.isBlank()
+                ? numerosTicketStr
+                : String.valueOf(Math.max(0, ticketsHabilitados));
+
+        String detalleTicketsWA = !numerosTicketStr.isBlank()
+                ? numerosTicketStr
+                : String.valueOf(ticketsHabilitados);
 
         notificarClienteWAInteligente(saved, "skyworth_registro_aprobado",
                 List.of(
@@ -169,9 +181,10 @@ public class SupervisorClienteService {
                 ),
                 String.format(
                         "🎉 ¡Felicidades %s! Tu compra de TV Skyworth (Serial: %s) ha sido APROBADA exitosamente.\n\n" +
-                        "🎟️ Tickets habilitados: %s\n" +
-                        "Consulta tus números de ticket en: https://bono.skyworth.bo/mis-tickets",
-                        reg.getNombreCliente(), reg.getSerial(), campo4Tickets
+                        "🎟️ Tickets generados: %s\n\n" +
+                        "Consulta y realiza el seguimiento de tus tickets oficiales en:\n" +
+                        "https://bono.skyworth.bo/mis-tickets",
+                        reg.getNombreCliente(), reg.getSerial(), detalleTicketsWA
                 )
         );
 
@@ -303,6 +316,7 @@ public class SupervisorClienteService {
         notificarClienteWAInteligente(saved, "skyworth_registro_rechazado",
                 List.of(
                         reg.getNombreCliente(),
+                        reg.getProductoModelo() != null && !reg.getProductoModelo().isBlank() ? reg.getProductoModelo() : "Televisor Skyworth",
                         reg.getSerial(),
                         motivo.trim()
                 ),
@@ -328,6 +342,56 @@ public class SupervisorClienteService {
         ));
 
         return saved;
+    }
+
+    @Transactional
+    public void eliminarRegistro(Long registroId, Long supervisorId, String supervisorNombre, String motivo) {
+        RegistroCliente reg = registroClienteRepository.findById(registroId)
+                .orElseThrow(() -> new IllegalArgumentException("Registro no encontrado con ID: " + registroId));
+
+        String serial = reg.getSerial();
+        String cliente = reg.getNombreCliente() + " " + reg.getApellidoCliente();
+        String ci = reg.getCi();
+
+        // 1. Revertir entrega de ruleta si existiese y restaurar el stock del impulsador
+        Optional<EntregaRuleta> entregaOpt = entregaRuletaRepository.findByRegistroClienteId(registroId);
+        if (entregaOpt.isPresent()) {
+            EntregaRuleta entrega = entregaOpt.get();
+            if (entrega.getPremioRuleta() != null && entrega.getImpulsadorId() != null && entrega.getCampanaCliente() != null) {
+                Long campanaId = entrega.getCampanaCliente().getId();
+                Long impulsadorId = entrega.getImpulsadorId();
+                Long premioId = entrega.getPremioRuleta().getId();
+
+                List<InventarioImpulsador> invList = inventarioImpulsadorRepository
+                        .findByCampanaClienteIdAndUsuarioIdAndPremioRuletaId(campanaId, impulsadorId, premioId);
+                if (invList.isEmpty()) {
+                    invList = inventarioImpulsadorRepository
+                            .findByCampanaClienteIdAndVendedorIdAndPremioRuletaId(campanaId, impulsadorId, premioId);
+                }
+                if (!invList.isEmpty()) {
+                    InventarioImpulsador inv = invList.get(0);
+                    inv.setCantidadEntregada(Math.max(0, inv.getCantidadEntregada() - 1));
+                    inv.calculateSaldo();
+                    inventarioImpulsadorRepository.save(inv);
+                }
+            }
+            entregaRuletaRepository.delete(entrega);
+        }
+
+        // 2. Eliminar tickets asociados para limpiar completamente el sorteo
+        ticketClienteRepository.deleteByRegistroClienteId(registroId);
+
+        // 3. Eliminar el registro de cliente de la base de datos
+        registroClienteRepository.delete(reg);
+
+        // 4. Registrar en auditoría la liberación del serial
+        auditoriaService.log(
+                supervisorNombre,
+                "ELIMINACION_REGISTRO_CLIENTE",
+                "Registro ID: " + registroId + " con Serial: " + serial + " del cliente " + cliente + " (CI: " + ci + ") fue ELIMINADO/ANULADO por " + supervisorNombre + ". Motivo: " + (motivo != null && !motivo.isBlank() ? motivo.trim() : "Anulación administrativa") + ". Serial liberado para nuevo registro.",
+                "RegistroCliente",
+                registroId.toString()
+        );
     }
 
     /**
@@ -546,5 +610,76 @@ public class SupervisorClienteService {
         Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
 
         return "uploads/" + subDir + "/" + filename;
+    }
+
+    public List<TicketCliente> generarTicketsParaRegistro(RegistroCliente reg, TicketCliente.EstadoTicket estadoInicial) {
+        if (reg == null) return Collections.emptyList();
+
+        CampanaCliente campana = reg.getCampanaCliente();
+        if (campana == null) {
+            campana = campanaClienteRepository.findCurrentActiveCampaign(LocalDate.now()).orElse(null);
+            if (campana != null) {
+                reg.setCampanaCliente(campana);
+                registroClienteRepository.save(reg);
+            }
+        }
+        if (campana == null) {
+            log.warn("No se pudo generar tickets para registro ID {}: No hay campaña activa.", reg.getId());
+            return Collections.emptyList();
+        }
+
+        // Resolver productoId a partir del serial si está vacío
+        Long productoId = reg.getProductoId();
+        if (productoId == null && reg.getSerial() != null && !reg.getSerial().isBlank()) {
+            Optional<com.ninabit.bono.modules.serial.Serial> sOpt = serialRepository.findByNumeroSerie(reg.getSerial().trim().toUpperCase());
+            if (sOpt.isPresent()) {
+                com.ninabit.bono.modules.serial.Serial s = sOpt.get();
+                if (s.getProductoId() != null) {
+                    productoId = s.getProductoId();
+                    reg.setProductoId(productoId);
+                }
+                if (s.getModelo() != null && (reg.getProductoModelo() == null || reg.getProductoModelo().isBlank())) {
+                    reg.setProductoModelo(s.getModelo());
+                }
+                registroClienteRepository.save(reg);
+            }
+        }
+
+        int cantTickets = 0; // Si el producto no está registrado en la campaña, otorga 0 tickets
+        if (productoId != null) {
+            Optional<CampanaClienteProducto> cpOpt = campanaClienteProductoRepository
+                    .findByCampanaClienteIdAndProductoIdAndActivoTrue(campana.getId(), productoId);
+            if (cpOpt.isPresent() && cpOpt.get().getTickets() != null && cpOpt.get().getTickets() > 0) {
+                cantTickets = cpOpt.get().getTickets();
+            }
+        }
+
+        if (cantTickets <= 0) {
+            log.info("Registro ID {}: El producto no está registrado en la campaña de cliente final (0 tickets).", reg.getId());
+            return Collections.emptyList();
+        }
+
+        int year = reg.getFechaCompra() != null ? reg.getFechaCompra().getYear() : LocalDate.now().getYear();
+        List<TicketCliente> lista = new ArrayList<>();
+        for (int i = 1; i <= cantTickets; i++) {
+            String codigoTicket = String.format("SKY-%d-%06d-%d", year, reg.getId(), i);
+            TicketCliente t = TicketCliente.builder()
+                    .codigoTicket(codigoTicket)
+                    .registroCliente(reg)
+                    .campanaCliente(campana)
+                    .clienteCi(reg.getCi() != null ? reg.getCi().trim() : "")
+                    .clienteNombre(reg.getNombreCliente() + " " + reg.getApellidoCliente())
+                    .clienteCelular(reg.getCelular())
+                    .serial(reg.getSerial())
+                    .productoModelo(reg.getProductoModelo())
+                    .estado(estadoInicial)
+                    .excluidoQuincenal(false)
+                    .build();
+            lista.add(t);
+        }
+
+        List<TicketCliente> guardados = ticketClienteRepository.saveAll(lista);
+        log.info("Generados {} tickets ({}) para registro ID: {}", guardados.size(), estadoInicial, reg.getId());
+        return guardados;
     }
 }

@@ -15,7 +15,20 @@ public interface TicketClienteRepository extends JpaRepository<TicketCliente, Lo
 
     List<TicketCliente> findByRegistroClienteId(Long registroClienteId);
 
+    @Query("SELECT t FROM TicketCliente t WHERE t.registroCliente.id IN :registroIds ORDER BY t.createdAt DESC")
+    List<TicketCliente> findByRegistroClienteIdIn(@org.springframework.data.repository.query.Param("registroIds") List<Long> registroIds);
+
     List<TicketCliente> findByClienteCiOrderByCreatedAtDesc(String clienteCi);
+
+    @Query("SELECT t FROM TicketCliente t WHERE " +
+           "TRIM(t.clienteCi) = :ci OR " +
+           "LOWER(TRIM(t.clienteCi)) = LOWER(:ci) OR " +
+           "LOWER(t.clienteCi) LIKE LOWER(CONCAT(:ci, '%')) OR " +
+           "LOWER(t.clienteCi) LIKE LOWER(CONCAT('%', :ci, '%')) OR " +
+           "t.clienteCelular LIKE CONCAT('%', :ci, '%') OR " +
+           "LOWER(t.serial) = LOWER(:ci) " +
+           "ORDER BY t.createdAt DESC")
+    List<TicketCliente> findByClienteCiFlexible(@org.springframework.data.repository.query.Param("ci") String ci);
 
     Optional<TicketCliente> findByCodigoTicket(String codigoTicket);
 
@@ -28,6 +41,10 @@ public interface TicketClienteRepository extends JpaRepository<TicketCliente, Lo
     @Modifying
     @Query("UPDATE TicketCliente t SET t.estado = :nuevoEstado WHERE t.registroCliente.id = :registroId")
     int updateEstadoByRegistroId(Long registroId, TicketCliente.EstadoTicket nuevoEstado);
+
+    @Modifying
+    @Query("DELETE FROM TicketCliente t WHERE t.registroCliente.id = :registroId")
+    int deleteByRegistroClienteId(Long registroId);
 
     @Modifying
     @Query("UPDATE TicketCliente t SET t.excluidoQuincenal = true WHERE t.campanaCliente.id = :campanaId AND t.clienteCi = :ci")

@@ -78,6 +78,9 @@ public class ChatbotService {
         if (req.waVerifyToken() != null && !req.waVerifyToken().isBlank()) {
             cfg.setWaVerifyToken(req.waVerifyToken().trim());
         }
+        if (req.waHeaderImageUrl() != null) {
+            cfg.setWaHeaderImageUrl(req.waHeaderImageUrl().trim());
+        }
         if (req.modoRegistroWa() != null) {
             cfg.setModoRegistroWa(req.modoRegistroWa());
         }
@@ -421,6 +424,7 @@ public class ChatbotService {
         c.setFaqsJson("[]");
         c.setModoRegistroWa(ChatbotConfig.ModoRegistroWa.PASO_A_PASO);
         c.setCantidadFotosRequeridas(2);
+        c.setWaHeaderImageUrl(WhatsAppService.DEFAULT_HEADER_IMAGE);
         c.setMensajeRedireccionWeb("⚡ *Tip:* Para registrar tu equipo y participar en los sorteos por *Bs 100.000*, ingresa a nuestra web oficial:\n👉 https://bono.skyworth.bo/registro-cliente");
         return c;
     }
@@ -445,6 +449,10 @@ public class ChatbotService {
                 ? cfg.getWaVerifyToken()
                 : props.getVerifyToken();
 
+        String effectiveHeaderImage = (cfg.getWaHeaderImageUrl() != null && !cfg.getWaHeaderImageUrl().isBlank())
+                ? cfg.getWaHeaderImageUrl()
+                : WhatsAppService.DEFAULT_HEADER_IMAGE;
+
         return new ChatbotConfigResponse(
                 cfg.isActivo(), cfg.getProveedorIa(), keyMasked, cfg.getModelo(),
                 cfg.getBaseUrl(),
@@ -458,6 +466,7 @@ public class ChatbotService {
                 cfg.getWaPhoneNumberId2(),
                 cfg.getWaNumero2(),
                 effectiveVerify,
+                effectiveHeaderImage,
                 cfg.getModoRegistroWa() != null ? cfg.getModoRegistroWa() : ChatbotConfig.ModoRegistroWa.PASO_A_PASO,
                 cfg.getCantidadFotosRequeridas() != null ? cfg.getCantidadFotosRequeridas() : 2,
                 cfg.getMensajeRedireccionWeb() != null ? cfg.getMensajeRedireccionWeb() : ""

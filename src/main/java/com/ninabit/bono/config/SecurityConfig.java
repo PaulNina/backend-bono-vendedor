@@ -53,6 +53,11 @@ public class SecurityConfig {
             "/webhook/whatsapp/**",
             "/api/webhook/whatsapp",
             "/api/webhook/whatsapp/**",
+            // Tiendas: endpoints públicos de solicitud y listados para selección
+            "/tiendas/solicitudes/public",
+            "/tiendas/solicitudes/upload-verificacion",
+            "/tiendas/active",
+            "/tiendas/by-city/**",
     };
 
     @Bean

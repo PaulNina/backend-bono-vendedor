@@ -24,6 +24,7 @@ public record ChatbotConfigResponse(
         String waPhoneNumberId2,
         String waNumero2,
         String waVerifyToken,
+        String waHeaderImageUrl,
         com.ninabit.bono.modules.whatsapp.entity.ChatbotConfig.ModoRegistroWa modoRegistroWa,
         Integer cantidadFotosRequeridas,
         String mensajeRedireccionWeb

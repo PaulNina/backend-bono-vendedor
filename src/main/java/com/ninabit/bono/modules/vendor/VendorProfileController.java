@@ -25,6 +25,8 @@ public class VendorProfileController {
     private final CiudadRepository ciudadRepository;
     private final VentaRepository ventaRepository;
     private final UsuarioRepository usuarioRepository;
+    private final com.ninabit.bono.modules.tienda.TiendaRepository tiendaRepository;
+    private final com.ninabit.bono.modules.tienda.VendedorTiendaRepository vendedorTiendaRepository;
 
     @GetMapping
     @Operation(summary = "Obtener mi perfil de vendedor o usuario")
@@ -99,6 +101,15 @@ public class VendorProfileController {
             }
             if (tienda != null) {
                 v.setTienda(tienda.trim());
+                if (!tienda.isBlank()) {
+                    tiendaRepository.findFirstByNombreIgnoreCase(tienda.trim()).ifPresent(t -> {
+                        com.ninabit.bono.modules.tienda.VendedorTienda vt = vendedorTiendaRepository
+                                .findFirstByVendedorIdAndTiendaId(v.getId(), t.getId())
+                                .orElse(com.ninabit.bono.modules.tienda.VendedorTienda.builder().vendedor(v).tienda(t).build());
+                        vt.setActivo(true);
+                        vendedorTiendaRepository.save(vt);
+                    });
+                }
             }
             if (tallaPolera != null && !tallaPolera.isBlank()) {
                 v.setTallaPolera(tallaPolera);

@@ -107,16 +107,33 @@ public class RegistroClienteService {
             productoId = producto.getId();
         }
 
-        int ticketsProyectados = 1;
+        int ticketsProyectados = 0;
         if (productoId != null) {
             Optional<CampanaClienteProducto> cpOpt = campanaClienteProductoRepository
                     .findByCampanaClienteIdAndProductoIdAndActivoTrue(campana.getId(), productoId);
-            if (cpOpt.isPresent()) {
+            if (cpOpt.isPresent() && cpOpt.get().getTickets() != null) {
                 ticketsProyectados = cpOpt.get().getTickets();
             }
         }
 
+        if (ticketsProyectados <= 0) {
+            response.put("valido", false);
+            response.put("noParticipa", true);
+            response.put("serialExiste", true);
+            response.put("serial", cleanedSerial);
+            response.put("productoId", productoId);
+            response.put("modelo", modelo != null ? modelo : "");
+            response.put("pulgadas", pulgadas);
+            response.put("ticketsProyectados", 0);
+            response.put("mensaje", "El número de serie existe y es original de Skyworth" +
+                    (modelo != null && !modelo.isBlank() ? " (" + modelo + ")" : "") +
+                    ", pero este modelo no está participando en la campaña activa.");
+            return response;
+        }
+
         response.put("valido", true);
+        response.put("noParticipa", false);
+        response.put("serialExiste", true);
         response.put("serial", cleanedSerial);
         response.put("productoId", productoId);
         response.put("modelo", modelo != null ? modelo : "");
@@ -247,38 +264,59 @@ public class RegistroClienteService {
                 .build();
 
 
+        // Resolver productoId a partir del serial si viene vacío
+        if (productoId == null && !cleanedSerial.isBlank()) {
+            Optional<com.ninabit.bono.modules.serial.Serial> sOpt = serialRepository.findByNumeroSerie(cleanedSerial);
+            if (sOpt.isPresent()) {
+                com.ninabit.bono.modules.serial.Serial s = sOpt.get();
+                if (s.getProductoId() != null) {
+                    productoId = s.getProductoId();
+                    registro.setProductoId(productoId);
+                }
+                if (s.getModelo() != null && (registro.getProductoModelo() == null || registro.getProductoModelo().isBlank())) {
+                    registro.setProductoModelo(s.getModelo());
+                }
+            }
+        }
+
         registro = registroClienteRepository.save(registro);
 
-        // Determinar cantidad de tickets
-        int cantTickets = 1;
+        // Determinar cantidad de tickets (debe participar en la campaña)
+        int cantTickets = 0;
         if (productoId != null) {
             Optional<CampanaClienteProducto> cpOpt = campanaClienteProductoRepository
                     .findByCampanaClienteIdAndProductoIdAndActivoTrue(campana.getId(), productoId);
-            if (cpOpt.isPresent()) {
+            if (cpOpt.isPresent() && cpOpt.get().getTickets() != null && cpOpt.get().getTickets() > 0) {
                 cantTickets = cpOpt.get().getTickets();
             }
         }
 
-        // Generar N tickets en estado NO_HABILITADO
-        List<TicketCliente> tickets = new ArrayList<>();
-        int year = LocalDate.now().getYear();
-        for (int i = 1; i <= cantTickets; i++) {
-            String codigoTicket = String.format("SKY-%d-%06d-%d", year, registro.getId(), i);
-            TicketCliente ticket = TicketCliente.builder()
-                    .codigoTicket(codigoTicket)
-                    .registroCliente(registro)
-                    .campanaCliente(campana)
-                    .clienteCi(registro.getCi() != null ? registro.getCi() : "")
-                    .clienteNombre(registro.getNombreCliente() + " " + registro.getApellidoCliente())
-                    .clienteCelular(registro.getCelular())
-                    .serial(registro.getSerial())
-                    .productoModelo(registro.getProductoModelo())
-                    .estado(TicketCliente.EstadoTicket.NO_HABILITADO)
-                    .excluidoQuincenal(false)
-                    .build();
-            tickets.add(ticket);
+        if (cantTickets <= 0) {
+            throw new IllegalStateException("El producto asociado al serial " + cleanedSerial + " no participa en la campaña actual.");
         }
-        ticketClienteRepository.saveAll(tickets);
+
+        // Generar N tickets en estado NO_HABILITADO únicamente si el producto está en la campaña
+        List<TicketCliente> tickets = new ArrayList<>();
+        if (cantTickets > 0) {
+            int year = LocalDate.now().getYear();
+            for (int i = 1; i <= cantTickets; i++) {
+                String codigoTicket = String.format("SKY-%d-%06d-%d", year, registro.getId(), i);
+                TicketCliente ticket = TicketCliente.builder()
+                        .codigoTicket(codigoTicket)
+                        .registroCliente(registro)
+                        .campanaCliente(campana)
+                        .clienteCi(registro.getCi() != null ? registro.getCi().trim() : "")
+                        .clienteNombre(registro.getNombreCliente() + " " + registro.getApellidoCliente())
+                        .clienteCelular(registro.getCelular())
+                        .serial(registro.getSerial())
+                        .productoModelo(registro.getProductoModelo())
+                        .estado(TicketCliente.EstadoTicket.NO_HABILITADO)
+                        .excluidoQuincenal(false)
+                        .build();
+                tickets.add(ticket);
+            }
+            ticketClienteRepository.saveAll(tickets);
+        }
 
         auditoriaService.log(
                 impulsadorNombre != null ? impulsadorNombre : "PUBLIC_CLIENT",
@@ -376,11 +414,65 @@ public class RegistroClienteService {
         }
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ConsultarTicketsResponseDto consultarTicketsPorCi(String ci) {
         String cleanCi = ci != null ? ci.trim() : "";
-        List<TicketCliente> tickets = ticketClienteRepository.findByClienteCiOrderByCreatedAtDesc(cleanCi);
-        List<RegistroCliente> registros = registroClienteRepository.findByCiOrderByCreatedAtDesc(cleanCi);
+        List<RegistroCliente> registros = cleanCi.isBlank()
+                ? Collections.emptyList()
+                : registroClienteRepository.findByCiFlexible(cleanCi);
+
+        // Auto-reparación inteligente: Si algún registro aprobado o pendiente no tiene tickets, generarlos
+        for (RegistroCliente r : registros) {
+            List<TicketCliente> existing = ticketClienteRepository.findByRegistroClienteId(r.getId());
+            if (existing.isEmpty() && r.getEstado() != RegistroCliente.EstadoRegistro.RECHAZADO) {
+                int cantTickets = 0;
+                Long pId = r.getProductoId();
+                if (pId == null && r.getSerial() != null && !r.getSerial().isBlank()) {
+                    serialRepository.findByNumeroSerie(r.getSerial().trim().toUpperCase()).ifPresent(s -> {
+                        if (s.getProductoId() != null) r.setProductoId(s.getProductoId());
+                    });
+                    pId = r.getProductoId();
+                }
+                if (pId != null && r.getCampanaCliente() != null) {
+                    Optional<CampanaClienteProducto> cpOpt = campanaClienteProductoRepository
+                            .findByCampanaClienteIdAndProductoIdAndActivoTrue(r.getCampanaCliente().getId(), pId);
+                    if (cpOpt.isPresent() && cpOpt.get().getTickets() != null && cpOpt.get().getTickets() > 0) {
+                        cantTickets = cpOpt.get().getTickets();
+                    }
+                }
+                // Si el producto no está en la campaña, no genera tickets (cantTickets = 0)
+                if (cantTickets > 0) {
+                    TicketCliente.EstadoTicket est = (r.getEstado() == RegistroCliente.EstadoRegistro.APROBADO)
+                            ? TicketCliente.EstadoTicket.HABILITADO
+                            : TicketCliente.EstadoTicket.NO_HABILITADO;
+                    int year = r.getFechaCompra() != null ? r.getFechaCompra().getYear() : LocalDate.now().getYear();
+                    List<TicketCliente> nuevos = new ArrayList<>();
+                    for (int i = 1; i <= cantTickets; i++) {
+                        nuevos.add(TicketCliente.builder()
+                                .codigoTicket(String.format("SKY-%d-%06d-%d", year, r.getId(), i))
+                                .registroCliente(r)
+                                .campanaCliente(r.getCampanaCliente())
+                                .clienteCi(r.getCi() != null ? r.getCi().trim() : "")
+                                .clienteNombre(r.getNombreCliente() + " " + r.getApellidoCliente())
+                                .clienteCelular(r.getCelular())
+                                .serial(r.getSerial())
+                                .productoModelo(r.getProductoModelo())
+                                .estado(est)
+                                .excluidoQuincenal(false)
+                                .build());
+                    }
+                    ticketClienteRepository.saveAll(nuevos);
+                }
+            }
+        }
+
+        List<Long> regIds = registros.stream().map(RegistroCliente::getId).toList();
+        List<TicketCliente> tickets;
+        if (!regIds.isEmpty()) {
+            tickets = ticketClienteRepository.findByRegistroClienteIdIn(regIds);
+        } else {
+            tickets = cleanCi.isBlank() ? Collections.emptyList() : ticketClienteRepository.findByClienteCiFlexible(cleanCi);
+        }
 
         List<TicketClienteDto> ticketsDto = tickets.stream()
                 .map(TicketClienteDto::fromEntity)

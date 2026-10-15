@@ -14,7 +14,7 @@ public interface VentaCampanaRepository extends JpaRepository<VentaCampana, Long
 
         @org.springframework.data.jpa.repository.Query("SELECT new com.ninabit.bono.modules.payment.CommissionReportDTO("
                         +
-                        "v.id, v.nombreCompleto, COALESCE(c.nombre, ''), COALESCE(v.tienda, ''), v.fotoQr, v.tallaPolera, "
+                        "v.id, v.nombreCompleto, COALESCE(c.nombre, COALESCE(venta.storeCity, COALESCE(venta.ciudad, ''))), COALESCE(v.tienda, COALESCE(venta.storeName, '')), v.fotoQr, v.tallaPolera, "
                         +
                         "COUNT(vc.id), SUM(vc.bonoGanado), " +
                         "CASE WHEN vc.pago IS NULL THEN 'Pendiente' ELSE 'Pagado' END) " +
@@ -24,13 +24,13 @@ public interface VentaCampanaRepository extends JpaRepository<VentaCampana, Long
                         "LEFT JOIN v.ciudad c " +
                         "WHERE venta.estado = 'APROBADA' " +
                         "AND (:campanaId IS NULL OR vc.campana.id = :campanaId) " +
-                        "AND (:ciudad IS NULL OR :ciudad = '' OR c.nombre = :ciudad) " +
+                        "AND (:ciudad IS NULL OR :ciudad = '' OR LOWER(TRIM(c.nombre)) = LOWER(TRIM(:ciudad)) OR LOWER(TRIM(venta.storeCity)) = LOWER(TRIM(:ciudad)) OR LOWER(TRIM(venta.ciudad)) = LOWER(TRIM(:ciudad))) " +
                         "AND (cast(:startDate as date) IS NULL OR venta.saleDate >= :startDate) " +
                         "AND (cast(:endDate as date) IS NULL OR venta.saleDate <= :endDate) " +
                         "AND (:estadoPago IS NULL OR :estadoPago = 'Todos' " +
                         "     OR (:estadoPago = 'Pendiente' AND vc.pago IS NULL) " +
                         "     OR (:estadoPago = 'Pagado' AND vc.pago IS NOT NULL)) " +
-                        "GROUP BY v.id, v.nombreCompleto, c.nombre, v.tienda, v.fotoQr, v.tallaPolera, "
+                        "GROUP BY v.id, v.nombreCompleto, c.nombre, venta.storeCity, venta.ciudad, v.tienda, venta.storeName, v.fotoQr, v.tallaPolera, "
                         +
                         "CASE WHEN vc.pago IS NULL THEN 'Pendiente' ELSE 'Pagado' END " +
                         "ORDER BY v.nombreCompleto ASC")
@@ -48,7 +48,7 @@ public interface VentaCampanaRepository extends JpaRepository<VentaCampana, Long
                         "WHERE venta.estado = 'APROBADA' AND vc.pago IS NULL " +
                         "AND v.id = :vendedorId " +
                         "AND (:campanaId IS NULL OR vc.campana.id = :campanaId) " +
-                        "AND (:ciudad IS NULL OR :ciudad = '' OR c.nombre = :ciudad) " +
+                        "AND (:ciudad IS NULL OR :ciudad = '' OR LOWER(TRIM(c.nombre)) = LOWER(TRIM(:ciudad)) OR LOWER(TRIM(venta.storeCity)) = LOWER(TRIM(:ciudad)) OR LOWER(TRIM(venta.ciudad)) = LOWER(TRIM(:ciudad))) " +
                         "AND (cast(:startDate as date) IS NULL OR venta.saleDate >= :startDate) " +
                         "AND (cast(:endDate as date) IS NULL OR venta.saleDate <= :endDate)")
         List<VentaCampana> findPendingToPay(

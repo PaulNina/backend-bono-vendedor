@@ -87,12 +87,21 @@ public class PagoController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) String estadoPago) {
-        if ("Todaslasciudades".equalsIgnoreCase(ciudad) || "Todas".equalsIgnoreCase(ciudad)
-                || "Todos".equalsIgnoreCase(ciudad)) {
-            ciudad = null;
+        if (ciudad != null) {
+            String c = ciudad.trim();
+            if (c.isEmpty() || "Todaslasciudades".equalsIgnoreCase(c) || "Todas".equalsIgnoreCase(c) || "Todos".equalsIgnoreCase(c)) {
+                ciudad = null;
+            } else {
+                ciudad = c;
+            }
         }
-        if ("Todos".equalsIgnoreCase(estadoPago)) {
-            estadoPago = null;
+        if (estadoPago != null) {
+            String ep = estadoPago.trim();
+            if (ep.isEmpty() || "Todos".equalsIgnoreCase(ep)) {
+                estadoPago = null;
+            } else {
+                estadoPago = ep;
+            }
         }
         List<CommissionReportDTO> report = ventaCampanaRepository.getCommissionReport(campanaId, ciudad, startDate,
                 endDate, estadoPago);

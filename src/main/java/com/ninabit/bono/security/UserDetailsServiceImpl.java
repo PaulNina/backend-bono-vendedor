@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -22,29 +23,39 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         Usuario usuario = usuarioRepository.findByEmailAndActivoTrue(email)
                 .orElseThrow(() -> new UsernameNotFoundException("Usuario no encontrado: " + email));
 
-        List<GrantedAuthority> authorities = new ArrayList<>();
-        authorities.add(new SimpleGrantedAuthority("ROLE_" + usuario.getRol().name()));
+        Set<GrantedAuthority> authorities = new java.util.HashSet<>();
+        Set<Usuario.Rol> userRoles = usuario.getRoles();
+        if (userRoles == null || userRoles.isEmpty()) {
+            if (usuario.getRol() != null) {
+                userRoles = Set.of(usuario.getRol());
+            } else {
+                userRoles = Set.of();
+            }
+        }
 
-        if (usuario.getRol() == Usuario.Rol.ADMIN_TOTAL) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN_OPERATIVO"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_SUPERVISOR"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
-        } else if (usuario.getRol() == Usuario.Rol.ADMIN) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN_TOTAL"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN_OPERATIVO"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_SUPERVISOR"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
-        } else if (usuario.getRol() == Usuario.Rol.ADMIN_OPERATIVO) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_SUPERVISOR"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
-        } else if (usuario.getRol() == Usuario.Rol.REVISOR) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
-        } else if (usuario.getRol() == Usuario.Rol.REVIEWER) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
+        for (Usuario.Rol r : userRoles) {
+            authorities.add(new SimpleGrantedAuthority("ROLE_" + r.name()));
+            if (r == Usuario.Rol.ADMIN_TOTAL) {
+                authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN_OPERATIVO"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_SUPERVISOR"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
+            } else if (r == Usuario.Rol.ADMIN) {
+                authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN_TOTAL"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN_OPERATIVO"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_SUPERVISOR"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
+            } else if (r == Usuario.Rol.ADMIN_OPERATIVO) {
+                authorities.add(new SimpleGrantedAuthority("ROLE_SUPERVISOR"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
+            } else if (r == Usuario.Rol.REVISOR) {
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVIEWER"));
+            } else if (r == Usuario.Rol.REVIEWER) {
+                authorities.add(new SimpleGrantedAuthority("ROLE_REVISOR"));
+            }
         }
 
         return new org.springframework.security.core.userdetails.User(

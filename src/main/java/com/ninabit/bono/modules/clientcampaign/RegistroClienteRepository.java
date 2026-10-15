@@ -16,9 +16,20 @@ public interface RegistroClienteRepository extends JpaRepository<RegistroCliente
 
     Optional<RegistroCliente> findByCampanaClienteIdAndSerial(Long campanaClienteId, String serial);
 
-    boolean existsByCampanaClienteIdAndSerial(Long campanaClienteId, String serial);
+    @Query("SELECT COUNT(r) > 0 FROM RegistroCliente r WHERE r.campanaCliente.id = :campanaClienteId AND r.serial = :serial AND r.estado NOT IN (com.ninabit.bono.modules.clientcampaign.RegistroCliente.EstadoRegistro.RECHAZADO)")
+    boolean existsByCampanaClienteIdAndSerial(@org.springframework.data.repository.query.Param("campanaClienteId") Long campanaClienteId, @org.springframework.data.repository.query.Param("serial") String serial);
 
     List<RegistroCliente> findByCiOrderByCreatedAtDesc(String ci);
+
+    @Query("SELECT r FROM RegistroCliente r WHERE " +
+           "TRIM(r.ci) = :ci OR " +
+           "LOWER(TRIM(r.ci)) = LOWER(:ci) OR " +
+           "LOWER(r.ci) LIKE LOWER(CONCAT(:ci, '%')) OR " +
+           "LOWER(r.ci) LIKE LOWER(CONCAT('%', :ci, '%')) OR " +
+           "r.celular LIKE CONCAT('%', :ci, '%') OR " +
+           "LOWER(r.serial) = LOWER(:ci) " +
+           "ORDER BY r.createdAt DESC")
+    List<RegistroCliente> findByCiFlexible(@org.springframework.data.repository.query.Param("ci") String ci);
 
     Optional<RegistroCliente> findByCiAndSerial(String ci, String serial);
 

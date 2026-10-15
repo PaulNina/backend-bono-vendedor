@@ -82,6 +82,27 @@ public class WhatsAppService {
                 .orElse(props.getVerifyToken() != null ? props.getVerifyToken() : "");
     }
 
+    public String getEffectiveHeaderImageUrl() {
+        return configRepo.findFirstByOrderByIdAsc()
+                .map(ChatbotConfig::getWaHeaderImageUrl)
+                .filter(s -> s != null && !s.isBlank())
+                .orElse(DEFAULT_HEADER_IMAGE);
+    }
+
+    @Transactional
+    public String guardarHeaderImageUrl(String url) {
+        ChatbotConfig cfg = configRepo.findFirstByOrderByIdAsc().orElseGet(() -> {
+            ChatbotConfig c = new ChatbotConfig();
+            c.setId(1L);
+            return c;
+        });
+        String finalUrl = (url != null && !url.isBlank()) ? url.trim() : DEFAULT_HEADER_IMAGE;
+        cfg.setWaHeaderImageUrl(finalUrl);
+        configRepo.save(cfg);
+        log.info("URL de imagen de cabecera de WhatsApp actualizada en BD: {}", finalUrl);
+        return finalUrl;
+    }
+
     // ── Enviar mensaje de texto ──────────────────────────────────
     public void enviarMensajeTexto(String to, String texto) {
         enviarMensajeTexto(to, texto, null, false);
@@ -301,8 +322,19 @@ public class WhatsAppService {
      * @param params        Parámetros del body en orden: {{1}}, {{2}}, {{3}}...
      * @param fallbackTexto Texto de respaldo a enviar como texto libre si el template falla
      */
+    public static final String DEFAULT_HEADER_IMAGE = "https://bono.skyworth.bo/logo_skyworth.jpg";
+
+    /**
+     * Envía un template de WhatsApp con imagen de cabecera y texto libre de fallback si falla.
+     * Todos los templates de Skyworth en Meta están configurados con cabecera de imagen.
+     *
+     * @param to            Número destino (ej: "59171234567" o "71234567")
+     * @param templateName  Nombre del template registrado en Meta (ej: skyworth_registro_aprobado)
+     * @param params        Parámetros del body en orden: {{1}}, {{2}}, {{3}}...
+     * @param fallbackTexto Texto de respaldo a enviar como texto libre si el template falla
+     */
     public void enviarTemplate(String to, String templateName, List<String> params, String fallbackTexto) {
-        enviarTemplate(to, templateName, "https://bono.skyworth.bo/logo_skyworth.jpg", params, fallbackTexto);
+        enviarTemplate(to, templateName, getEffectiveHeaderImageUrl(), params, fallbackTexto);
     }
 
     public void enviarTemplate(String to, String templateName, String headerImageUrl, List<String> params, String fallbackTexto) {
@@ -317,7 +349,7 @@ public class WhatsAppService {
 
     /**
      * Envía un template de WhatsApp y retorna el resultado detallado de la llamada a Meta.
-     * Utilizado para pruebas individuales desde panel admin y para envíos masivos.
+     * Envía siempre la imagen de cabecera requerida por los templates aprobados.
      */
     public TemplateSendResult enviarTemplateConResultado(String to, String templateName, String headerImageUrl, List<String> params) {
         String token = getEffectiveAccessToken();
@@ -333,20 +365,95 @@ public class WhatsAppService {
             celular = "591" + celular;
         }
 
+        MensajeWhatsapp msg = MensajeWhatsapp.builder()
+                .waMessageId(UUID.randomUUID().toString())
+                .fromNumber("Skyworth")
+                .phoneNumberId(phoneId)
+                .toNumber(celular)
+                .tipo(MensajeWhatsapp.TipoMensaje.TEMPLATE)
+                .direccion(MensajeWhatsapp.DireccionMensaje.SALIDA)
+                .contenido("[Template: " + templateName + "] Params: " + (params != null ? String.join(", ", params) : ""))
+                .estado(MensajeWhatsapp.EstadoMensaje.FALLIDO)
+                .esRespuestaChatbot(false)
+                .build();
+
+        String currentTemplate = "skyworth_registro_observado".equals(templateName)
+                ? "skyworth_registro_observado_2"
+                : templateName;
+        String currentHeaderImg = (headerImageUrl != null && !headerImageUrl.isBlank()) ? headerImageUrl.trim() : getEffectiveHeaderImageUrl();
+        String currentLang = "es";
+        String lastErrorMsg = null;
+
+        for (int intento = 1; intento <= 4; intento++) {
+            try {
+                ResponseEntity<Map> resp = invocarMetaTemplateApi(phoneId, token, celular, currentTemplate, currentHeaderImg, params, currentLang);
+                log.info("Template '{}' ({}) enviado exitosamente a {} (status: {})", currentTemplate, currentLang, celular, resp.getStatusCode());
+
+                String waId = extractSentMessageId(resp.getBody());
+                if (waId != null) {
+                    msg.setWaMessageId(waId);
+                }
+                msg.setEstado(MensajeWhatsapp.EstadoMensaje.ENVIADO);
+                msg.setContenido("[Template: " + currentTemplate + " (" + currentLang + ")] Params: " + (params != null ? String.join(", ", params) : ""));
+                mensajeRepo.save(msg);
+                return new TemplateSendResult(true, celular, waId, null);
+
+            } catch (Exception e) {
+                String errorMsg = e.getMessage();
+                if (e instanceof org.springframework.web.client.HttpStatusCodeException httpEx) {
+                    errorMsg = "HTTP " + httpEx.getStatusCode() + ": " + httpEx.getResponseBodyAsString();
+                }
+                lastErrorMsg = errorMsg;
+                log.warn("Meta rechazó template '{}' ({}, header={}) a {}: {}", currentTemplate, currentLang, currentHeaderImg, celular, errorMsg);
+
+                // Estrategia: Si el template no existe en 'es', intentar 'es_LA' (Español Latinoamérica)
+                if ("es".equals(currentLang) && (errorMsg.contains("132001") || errorMsg.contains("translated language") || errorMsg.contains("does not exist"))) {
+                    log.info("Reintentando template '{}' con idioma 'es_LA'...", currentTemplate);
+                    currentLang = "es_LA";
+                    continue;
+                }
+
+                // Estrategia 2: Si Meta rechaza por tipo de parámetro (132000), intentar con cantidad numérica en param 4
+                if ((errorMsg.contains("132000") || errorMsg.contains("parameter") || errorMsg.contains("does not match")) && params != null && params.size() >= 4) {
+                    String p4 = params.get(3);
+                    if (p4 != null && !p4.matches("^\\d+$")) {
+                        log.info("Reintentando template '{}' con conteo numérico en param 4...", currentTemplate);
+                        List<String> sanitizedParams = new ArrayList<>(params);
+                        int count = Math.max(1, p4.split(",").length);
+                        sanitizedParams.set(3, String.valueOf(count));
+                        params = sanitizedParams;
+                        continue;
+                    }
+                }
+
+                // Error no recuperable con reintentos
+                break;
+            }
+        }
+
+        try {
+            mensajeRepo.save(msg);
+        } catch (Exception ignored) {}
+        return new TemplateSendResult(false, celular, null, lastErrorMsg);
+    }
+
+    private ResponseEntity<Map> invocarMetaTemplateApi(
+            String phoneId, String token, String celular,
+            String templateName, String headerImageUrl, List<String> params, String langCode
+    ) {
         List<Map<String, Object>> components = new ArrayList<>();
 
-        // Componente HEADER con imagen
-        if (headerImageUrl != null && !headerImageUrl.isBlank()) {
-            components.add(Map.of(
-                    "type", "header",
-                    "parameters", List.of(
-                            Map.of(
-                                    "type", "image",
-                                    "image", Map.of("link", headerImageUrl.trim())
-                            )
-                    )
-            ));
-        }
+        // Componente HEADER con imagen siempre presente para todos los templates de Skyworth
+        String imgUrl = (headerImageUrl != null && !headerImageUrl.isBlank()) ? headerImageUrl.trim() : DEFAULT_HEADER_IMAGE;
+        components.add(Map.of(
+                "type", "header",
+                "parameters", List.of(
+                        Map.of(
+                                "type", "image",
+                                "image", Map.of("link", imgUrl)
+                        )
+                )
+        ));
 
         // Componente BODY con variables de texto
         if (params != null && !params.isEmpty()) {
@@ -358,10 +465,8 @@ public class WhatsAppService {
 
         Map<String, Object> templatePayload = new LinkedHashMap<>();
         templatePayload.put("name", templateName);
-        templatePayload.put("language", Map.of("code", "es"));
-        if (!components.isEmpty()) {
-            templatePayload.put("components", components);
-        }
+        templatePayload.put("language", Map.of("code", langCode != null ? langCode : "es"));
+        templatePayload.put("components", components);
 
         Map<String, Object> body = Map.of(
                 "messaging_product", "whatsapp",
@@ -376,42 +481,8 @@ public class WhatsAppService {
 
         String url = props.getApiBaseUrl() + "/" + props.getApiVersion() + "/" + phoneId + "/messages";
 
-        MensajeWhatsapp msg = MensajeWhatsapp.builder()
-                .waMessageId(UUID.randomUUID().toString())
-                .fromNumber("Skyworth")
-                .phoneNumberId(phoneId)
-                .toNumber(celular)
-                .tipo(MensajeWhatsapp.TipoMensaje.TEMPLATE)
-                .direccion(MensajeWhatsapp.DireccionMensaje.SALIDA)
-                .contenido("[Template: " + templateName + "] Params: " + (params != null ? String.join(", ", params) : ""))
-                .estado(MensajeWhatsapp.EstadoMensaje.FALLIDO)
-                .esRespuestaChatbot(false)
-                .build();
-
-        try {
-            RestTemplate rt = new RestTemplate();
-            ResponseEntity<Map> resp = rt.postForEntity(url, new HttpEntity<>(body, headers), Map.class);
-            log.info("Template '{}' enviado a {} (status: {})", templateName, celular, resp.getStatusCode());
-
-            String waId = extractSentMessageId(resp.getBody());
-            if (waId != null) {
-                msg.setWaMessageId(waId);
-            }
-            msg.setEstado(MensajeWhatsapp.EstadoMensaje.ENVIADO);
-            mensajeRepo.save(msg);
-            return new TemplateSendResult(true, celular, waId, null);
-
-        } catch (Exception e) {
-            String errorMsg = e.getMessage();
-            if (e instanceof org.springframework.web.client.HttpStatusCodeException httpEx) {
-                errorMsg = "HTTP " + httpEx.getStatusCode() + ": " + httpEx.getResponseBodyAsString();
-            }
-            log.warn("Meta rechazó el template '{}' a {}: {}", templateName, celular, errorMsg);
-            try {
-                mensajeRepo.save(msg);
-            } catch (Exception ignored) {}
-            return new TemplateSendResult(false, celular, null, errorMsg);
-        }
+        RestTemplate rt = new RestTemplate();
+        return rt.postForEntity(url, new HttpEntity<>(body, headers), Map.class);
     }
 
     /**
@@ -424,7 +495,7 @@ public class WhatsAppService {
 
         String img = (req.headerImageUrl() != null && !req.headerImageUrl().isBlank())
                 ? req.headerImageUrl().trim()
-                : "https://bono.skyworth.bo/logo_skyworth.jpg";
+                : getEffectiveHeaderImageUrl();
 
         int total = req.destinatarios().size();
         int exitosos = 0;

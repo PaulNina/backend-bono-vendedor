@@ -41,12 +41,24 @@ public class WhatsAppAdminController {
         return ResponseEntity.ok(Map.of("status", "enviado", "to", req.to()));
     }
 
+    @GetMapping("/header-image")
+    public ResponseEntity<Map<String, String>> getHeaderImage() {
+        return ResponseEntity.ok(Map.of("headerImageUrl", whatsAppService.getEffectiveHeaderImageUrl()));
+    }
+
+    @PutMapping("/header-image")
+    public ResponseEntity<Map<String, String>> updateHeaderImage(@RequestBody Map<String, String> body) {
+        String url = body != null ? body.get("headerImageUrl") : null;
+        String updated = whatsAppService.guardarHeaderImageUrl(url);
+        return ResponseEntity.ok(Map.of("headerImageUrl", updated));
+    }
+
     @PostMapping("/templates/probar")
     public ResponseEntity<com.ninabit.bono.modules.whatsapp.dto.TemplateSendResult> probarTemplate(
             @RequestBody com.ninabit.bono.modules.whatsapp.dto.TestTemplateRequest req) {
         String img = (req.headerImageUrl() != null && !req.headerImageUrl().isBlank())
-                ? req.headerImageUrl()
-                : "https://bono.skyworth.bo/logo_skyworth.jpg";
+                ? req.headerImageUrl().trim()
+                : whatsAppService.getEffectiveHeaderImageUrl();
         var resultado = whatsAppService.enviarTemplateConResultado(
                 req.to(),
                 req.templateName(),

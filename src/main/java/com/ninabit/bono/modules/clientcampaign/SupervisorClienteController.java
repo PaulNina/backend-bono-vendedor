@@ -119,6 +119,49 @@ public class SupervisorClienteController {
         }
     }
 
+    @DeleteMapping("/registros/{id}")
+    @Operation(summary = "Eliminar o anular registro de cliente y liberar su serial")
+    public ResponseEntity<Map<String, Object>> eliminarRegistro(
+            @PathVariable Long id,
+            @RequestParam(required = false) String motivo,
+            Authentication auth
+    ) {
+        try {
+            Long userId = getUsuarioId(auth);
+            String userName = getUsuarioNombre(auth);
+            supervisorClienteService.eliminarRegistro(id, userId, userName, motivo);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "mensaje", "Registro eliminado y anulado exitosamente. El serial ha sido liberado para nuevo registro."
+            ));
+        } catch (Exception e) {
+            log.error("Error al eliminar registro", e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/registros/{id}/eliminar")
+    @Operation(summary = "Eliminar o anular registro de cliente (vía POST) y liberar su serial")
+    public ResponseEntity<Map<String, Object>> anularYEliminarRegistro(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body,
+            Authentication auth
+    ) {
+        try {
+            Long userId = getUsuarioId(auth);
+            String userName = getUsuarioNombre(auth);
+            String motivo = body != null ? body.get("motivo") : null;
+            supervisorClienteService.eliminarRegistro(id, userId, userName, motivo);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "mensaje", "Registro eliminado y anulado exitosamente. El serial ha sido liberado para nuevo registro."
+            ));
+        } catch (Exception e) {
+            log.error("Error al anular/eliminar registro", e);
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
     @PostMapping(value = "/registros/{id}/evidencia", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Reemplazar o subir una evidencia fotográfica por el supervisor/admin")
     public ResponseEntity<Map<String, Object>> actualizarEvidencia(

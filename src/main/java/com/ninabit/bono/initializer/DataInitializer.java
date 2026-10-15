@@ -51,6 +51,7 @@ public class DataInitializer implements CommandLineRunner {
                 seedCities();
                 seedFallas();
                 seedUsers();
+                autoRepararTicketsRegistros();
                 syncPostgresSequences();
                 log.info("DataInitializer: Inicialización completada.");
         }
@@ -224,6 +225,7 @@ public class DataInitializer implements CommandLineRunner {
 
                         log.info("Actualizando restricción chatbot_config_proveedor_ia_check y columna base_url...");
                         jdbcTemplate.execute("ALTER TABLE chatbot_config ADD COLUMN IF NOT EXISTS base_url VARCHAR(255)");
+                        jdbcTemplate.execute("ALTER TABLE chatbot_config ADD COLUMN IF NOT EXISTS wa_header_image_url VARCHAR(500)");
                         jdbcTemplate.execute("ALTER TABLE chatbot_config DROP CONSTRAINT IF EXISTS chatbot_config_proveedor_ia_check");
                         jdbcTemplate.execute("ALTER TABLE chatbot_config ADD CONSTRAINT chatbot_config_proveedor_ia_check CHECK (proveedor_ia IN ('OPENAI', 'GEMINI', 'DEEPSEEK'))");
                         log.info("Restricción chatbot_config_proveedor_ia_check actualizada exitosamente.");
@@ -353,6 +355,39 @@ public class DataInitializer implements CommandLineRunner {
                         log.info("DataInitializer: Secuencias de base de datos sincronizadas automáticamente.");
                 } catch (Exception e) {
                         log.debug("Sincronización de secuencias omitida: {}", e.getMessage());
+                }
+        }
+
+        private void autoRepararTicketsRegistros() {
+                try {
+                        String sql =
+                                "INSERT INTO tickets_cliente (codigo_ticket, registro_cliente_id, campana_cliente_id, cliente_ci, cliente_nombre, cliente_celular, serial, producto_modelo, estado, excluido_quincenal, created_at) " +
+                                "SELECT " +
+                                "  'SKY-' || EXTRACT(YEAR FROM COALESCE(r.fecha_compra, CURRENT_DATE)) || '-' || LPAD(r.id::text, 6, '0') || '-1', " +
+                                "  r.id, " +
+                                "  r.campana_cliente_id, " +
+                                "  COALESCE(TRIM(r.ci), ''), " +
+                                "  TRIM(COALESCE(r.nombre_cliente, '') || ' ' || COALESCE(r.apellido_cliente, '')), " +
+                                "  r.celular, " +
+                                "  r.serial, " +
+                                "  COALESCE(r.producto_modelo, 'Televisor Skyworth'), " +
+                                "  CASE WHEN r.estado = 'APROBADO' THEN 'HABILITADO' WHEN r.estado = 'RECHAZADO' THEN 'ANULADO' ELSE 'NO_HABILITADO' END, " +
+                                "  false, " +
+                                "  NOW() " +
+                                "FROM registros_cliente r " +
+                                "LEFT JOIN serial s ON UPPER(TRIM(s.numero_serie)) = UPPER(TRIM(r.serial)) " +
+                                "JOIN campana_cliente_productos ccp ON ccp.campana_cliente_id = r.campana_cliente_id " +
+                                "  AND ccp.producto_id = COALESCE(r.producto_id, s.producto_id) " +
+                                "  AND ccp.activo = true " +
+                                "  AND ccp.tickets > 0 " +
+                                "WHERE NOT EXISTS (SELECT 1 FROM tickets_cliente t WHERE t.registro_cliente_id = r.id) " +
+                                "ON CONFLICT (codigo_ticket) DO NOTHING;";
+                        int rows = jdbcTemplate.update(sql);
+                        if (rows > 0) {
+                                log.info("DataInitializer: Se auto-generaron {} tickets para registros que no contaban con tickets.", rows);
+                        }
+                } catch (Exception e) {
+                        log.debug("Auto-reparación de tickets omitida: {}", e.getMessage());
                 }
         }
 }

@@ -63,6 +63,9 @@ public class ChatbotConfig {
     @Column(name = "wa_verify_token", length = 100)
     private String waVerifyToken;
 
+    @Column(name = "wa_header_image_url", length = 500)
+    private String waHeaderImageUrl;
+
     // ── Modo de Registro de Clientes por WhatsApp ──
     @Enumerated(EnumType.STRING)
     @Column(name = "modo_registro_wa", length = 30)

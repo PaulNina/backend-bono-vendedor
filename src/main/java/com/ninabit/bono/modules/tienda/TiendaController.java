@@ -24,6 +24,8 @@ public class TiendaController {
     private final VentaRepository ventaRepository;
     private final com.ninabit.bono.modules.city.CiudadRepository ciudadRepository;
     private final VendedorTiendaRepository vendedorTiendaRepository;
+    private final com.ninabit.bono.modules.user.UsuarioRepository usuarioRepository;
+    private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
     @org.springframework.beans.factory.annotation.Value("${app.upload.dir:uploads}")
     private String uploadDir;
@@ -349,6 +351,131 @@ public class TiendaController {
         }
 
         return ResponseEntity.ok(java.util.Map.of("message", "Tiendas sincronizadas correctamente"));
+    }
+
+    @GetMapping("/{id}/encargado")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERVISOR', 'ADMIN_TOTAL', 'ADMIN_OPERATIVO')")
+    @Operation(summary = "Obtener el usuario encargado vinculado a esta tienda")
+    public ResponseEntity<?> getEncargado(@PathVariable Long id) {
+        Tienda tienda = tiendaRepository.findById(id).orElse(null);
+        if (tienda == null) return ResponseEntity.notFound().build();
+
+        com.ninabit.bono.modules.user.Usuario u = usuarioRepository.findFirstByTiendaIdAndActivoTrue(id).orElse(null);
+        java.util.Map<String, Object> res = new java.util.HashMap<>();
+        res.put("tiendaId", id);
+        res.put("tiendaNombre", tienda.getNombre());
+        res.put("nombrePropietario", tienda.getNombrePropietario());
+        res.put("encargadoNombre", tienda.getEncargadoNombre());
+        res.put("encargadoEmail", tienda.getEncargadoEmail());
+        res.put("encargadoTelefono", tienda.getEncargadoTelefono());
+        if (u != null) {
+            res.put("tieneUsuario", true);
+            res.put("usuarioId", u.getId());
+            res.put("usuarioEmail", u.getEmail());
+            res.put("usuarioNombre", u.getNombreCompleto());
+            res.put("usuarioRol", u.getRol().name());
+            res.put("usuarioActivo", u.isActivo());
+        } else {
+            res.put("tieneUsuario", false);
+        }
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/{id}/vincular-encargado")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Vincular o crear un usuario encargado para la tienda")
+    public ResponseEntity<?> vincularEncargado(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, String> body
+    ) {
+        Tienda tienda = tiendaRepository.findById(id).orElse(null);
+        if (tienda == null) return ResponseEntity.notFound().build();
+
+        String usuarioIdStr = body.get("usuarioId");
+        String email = body.get("email");
+        String nombre = body.get("nombre");
+        String telefono = body.get("telefono");
+        String password = body.get("password");
+
+        com.ninabit.bono.modules.user.Usuario usuario = null;
+
+        if (usuarioIdStr != null && !usuarioIdStr.isBlank()) {
+            try {
+                Long uId = Long.parseLong(usuarioIdStr.trim());
+                usuario = usuarioRepository.findById(uId).orElse(null);
+            } catch (NumberFormatException ignored) {}
+        }
+
+        if (usuario == null && email != null && !email.isBlank()) {
+            usuario = usuarioRepository.findByEmail(email.trim().toLowerCase()).orElse(null);
+        }
+
+        if (usuario == null && email != null && !email.isBlank()) {
+            // Crear nuevo usuario encargado
+            String rawPass = (password != null && !password.isBlank()) ? password.trim() : "skyworth123";
+            usuario = com.ninabit.bono.modules.user.Usuario.builder()
+                    .email(email.trim().toLowerCase())
+                    .nombreCompleto(nombre != null && !nombre.isBlank() ? nombre.trim() : tienda.getNombre() + " - Encargado")
+                    .password(passwordEncoder.encode(rawPass))
+                    .rol(com.ninabit.bono.modules.user.Usuario.Rol.ENCARGADO_TIENDA)
+                    .tiendaId(tienda.getId())
+                    .ciudad(tienda.getCiudad() != null ? tienda.getCiudad().getNombre() : "")
+                    .activo(true)
+                    .build();
+            usuario = usuarioRepository.save(usuario);
+        } else if (usuario != null) {
+            // Asignar al existente
+            usuario.setTiendaId(tienda.getId());
+            if (usuario.getRol() == null || usuario.getRol() == com.ninabit.bono.modules.user.Usuario.Rol.VENDOR) {
+                usuario.setRol(com.ninabit.bono.modules.user.Usuario.Rol.ENCARGADO_TIENDA);
+            }
+            if (nombre != null && !nombre.isBlank()) {
+                usuario.setNombreCompleto(nombre.trim());
+            }
+            usuario.setActivo(true);
+            usuario = usuarioRepository.save(usuario);
+        } else {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", "Debe proporcionar usuarioId o email."));
+        }
+
+        // Actualizar datos informativos en la tienda
+        if (nombre != null && !nombre.isBlank()) tienda.setEncargadoNombre(nombre.trim());
+        tienda.setEncargadoEmail(usuario.getEmail());
+        if (telefono != null && !telefono.isBlank()) tienda.setEncargadoTelefono(telefono.trim());
+        tiendaRepository.save(tienda);
+
+        auditoriaService.log(getUser(), "TIENDA_ENCARGADO_VINCULADO",
+                "Usuario " + usuario.getEmail() + " vinculado como encargado de la tienda " + tienda.getNombre(),
+                "Tienda", tienda.getId().toString());
+
+        return ResponseEntity.ok(java.util.Map.of(
+                "success", true,
+                "message", "Encargado vinculado correctamente",
+                "usuarioId", usuario.getId(),
+                "usuarioEmail", usuario.getEmail()
+        ));
+    }
+
+    @DeleteMapping("/{id}/desvincular-encargado/{usuarioId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Desvincular el usuario encargado de la tienda")
+    public ResponseEntity<?> desvincularEncargado(
+            @PathVariable Long id,
+            @PathVariable Long usuarioId
+    ) {
+        Tienda tienda = tiendaRepository.findById(id).orElse(null);
+        if (tienda == null) return ResponseEntity.notFound().build();
+
+        return usuarioRepository.findById(usuarioId).map(u -> {
+            if (java.util.Objects.equals(u.getTiendaId(), id)) {
+                u.setTiendaId(null);
+                usuarioRepository.save(u);
+                auditoriaService.log(getUser(), "TIENDA_ENCARGADO_DESVINCULADO",
+                        "Usuario " + u.getEmail() + " desvinculado de la tienda " + tienda.getNombre(),
+                        "Tienda", tienda.getId().toString());
+            }
+            return ResponseEntity.ok(java.util.Map.of("message", "Usuario desvinculado de la tienda"));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     private String getUser() {
