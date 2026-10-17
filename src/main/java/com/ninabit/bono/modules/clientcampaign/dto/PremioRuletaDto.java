@@ -21,6 +21,7 @@ public class PremioRuletaDto {
     private String colorHex;
     private Integer probabilidadPeso;
     private boolean activo;
+    private boolean esSinPremio;
     private Integer ordenRuleta;
     private LocalDateTime createdAt;
 
@@ -35,6 +36,7 @@ public class PremioRuletaDto {
                 .colorHex(p.getColorHex())
                 .probabilidadPeso(p.getProbabilidadPeso())
                 .activo(p.isActivo())
+                .esSinPremio(p.isEsSinPremio())
                 .ordenRuleta(p.getOrdenRuleta())
                 .createdAt(p.getCreatedAt())
                 .build();

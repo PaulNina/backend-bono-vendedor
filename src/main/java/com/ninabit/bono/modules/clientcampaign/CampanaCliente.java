@@ -44,6 +44,14 @@ public class CampanaCliente {
     @Builder.Default
     private boolean ruletaHabilitada = true;
 
+    @Column(name = "ruleta_siga_participando_habilitado")
+    @Builder.Default
+    private boolean ruletaSigaParticipandoHabilitado = false;
+
+    @Column(name = "ruleta_siga_participando_porcentaje")
+    @Builder.Default
+    private Integer ruletaSigaParticipandoPorcentaje = 20;
+
     @Column(name = "web_habilitada", nullable = false)
     @Builder.Default
     private boolean webHabilitada = true;
@@ -80,5 +88,9 @@ public class CampanaCliente {
     @PreUpdate
     public void preUpdate() {
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public Integer getRuletaSigaParticipandoPorcentaje() {
+        return this.ruletaSigaParticipandoPorcentaje != null ? this.ruletaSigaParticipandoPorcentaje : 20;
     }
 }

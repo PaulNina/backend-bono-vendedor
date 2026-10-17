@@ -36,18 +36,25 @@ public class RuletaService {
     private final SecureRandom random = new SecureRandom();
 
     /**
-     * Obtiene los premios de la ruleta disponibles para un impulsador específico.
-     * REGLA ESTRICTA: Se excluyen automáticamente todos los premios cuyo saldo sea 0.
+     * Obtiene los premios físicos de la ruleta disponibles para un impulsador específico.
+     * Busca por usuarioId, vendedorId, nombreDestinatario y tiendaId para evitar discrepancias.
+     * REGLA ESTRICTA: Se excluyen automáticamente todos los premios cuyo saldo sea 0 y los que no son premios físicos.
      */
     @Transactional(readOnly = true)
-    public List<Map<String, Object>> obtenerPremiosDisponiblesParaRuleta(Long campanaId, Long impulsadorId) {
+    public List<Map<String, Object>> obtenerPremiosDisponiblesParaRuleta(
+            Long campanaId,
+            Long usuarioId,
+            Long vendedorId,
+            String nombreCompleto,
+            Long tiendaId
+    ) {
         List<InventarioImpulsador> inventarios = inventarioImpulsadorRepository
-                .findAvailableByCampanaAndVendedor(campanaId, impulsadorId);
+                .findAvailableByCampanaAndUser(campanaId, usuarioId, vendedorId, nombreCompleto, tiendaId);
 
         Map<Long, Map<String, Object>> map = new LinkedHashMap<>();
         for (InventarioImpulsador inv : inventarios) {
             PremioRuleta p = inv.getPremioRuleta();
-            if (p.isActivo() && inv.getSaldo() > 0) {
+            if (p != null && p.isActivo() && !p.isEsSinPremio() && inv.getSaldo() > 0) {
                 if (map.containsKey(p.getId())) {
                     Map<String, Object> existing = map.get(p.getId());
                     int prevSaldo = (int) existing.get("saldoDisponible");
@@ -61,25 +68,36 @@ public class RuletaService {
                     item.put("colorHex", p.getColorHex());
                     item.put("probabilidadPeso", p.getProbabilidadPeso());
                     item.put("saldoDisponible", inv.getSaldo());
+                    item.put("esSinPremio", false);
                     map.put(p.getId(), item);
                 }
             }
         }
+
         return new ArrayList<>(map.values());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> obtenerPremiosDisponiblesParaRuleta(Long campanaId, Long impulsadorId) {
+        return obtenerPremiosDisponiblesParaRuleta(campanaId, impulsadorId, impulsadorId, null, null);
     }
 
     /**
      * Ejecuta el giro de la ruleta atómicamente:
-     * 1. Selecciona un premio ponderado entre los que tienen saldo > 0.
-     * 2. Bloquea el inventario pesimísticamente y descuenta 1 unidad.
-     * 3. Registra la entrega vinculada al RegistroCliente.
+     * 1. Si la campaña tiene habilitado "Siga Participando" y el azar (o la falta de stock físico)
+     *    lo determina, registra la auditoría y retorna null (NO genera Entrega física ni descuenta stock).
+     * 2. Si corresponde premio físico, selecciona uno ponderado entre los que tienen saldo > 0.
+     * 3. Bloquea el inventario pesimísticamente y descuenta 1 unidad física.
+     * 4. Registra la EntregaRuleta física vinculada al RegistroCliente.
      */
     @Transactional
     public EntregaRuleta girarRuletaYAsignarPremio(
             Long campanaId,
             Long registroClienteId,
-            Long impulsadorId,
-            String impulsadorNombre
+            Long usuarioId,
+            Long vendedorId,
+            String impulsadorNombre,
+            Long tiendaId
     ) {
         // 1. Validar registro de cliente
         RegistroCliente registro = registroClienteRepository.findById(registroClienteId)
@@ -90,15 +108,37 @@ public class RuletaService {
             throw new IllegalStateException("Ya se ejecutó el giro de ruleta para este registro de compra.");
         }
 
-        // 2. Obtener premios con saldo > 0
-        List<InventarioImpulsador> inventariosDisponibles = inventarioImpulsadorRepository
-                .findAvailableByCampanaAndVendedor(campanaId, impulsadorId);
+        CampanaCliente campana = campanaClienteRepository.findById(campanaId)
+                .orElseThrow(() -> new IllegalArgumentException("Campaña no encontrada: " + campanaId));
 
-        if (inventariosDisponibles.isEmpty()) {
-            throw new IllegalStateException("El impulsador no cuenta con stock disponible de ningún premio para girar la ruleta.");
+        // 2. Obtener inventario físico con saldo > 0 buscando por todos los identificadores del operador
+        List<InventarioImpulsador> inventariosDisponibles = inventarioImpulsadorRepository
+                .findAvailableByCampanaAndUser(campanaId, usuarioId, vendedorId, impulsadorNombre, tiendaId)
+                .stream()
+                .filter(inv -> inv.getPremioRuleta() != null && inv.getPremioRuleta().isActivo() && !inv.getPremioRuleta().isEsSinPremio())
+                .toList();
+
+        // 3. Evaluar Siga Participando si está habilitado en la campaña (NO genera Entrega física)
+        if (campana.isRuletaSigaParticipandoHabilitado()) {
+            int porcentaje = campana.getRuletaSigaParticipandoPorcentaje() != null ? campana.getRuletaSigaParticipandoPorcentaje() : 20;
+            int roll = random.nextInt(100);
+            if (roll < porcentaje || inventariosDisponibles.isEmpty()) {
+                auditoriaService.log(
+                        impulsadorNombre,
+                        "GIRO_RULETA",
+                        "Resultado Ruleta: SIGA PARTICIPANDO para cliente " + registro.getNombreCliente() + " CI: " + registro.getCi(),
+                        "RegistroCliente",
+                        registro.getId().toString()
+                );
+                return null;
+            }
         }
 
-        // 3. Selección aleatoria ponderada (Weighted Random)
+        if (inventariosDisponibles.isEmpty()) {
+            throw new IllegalStateException("El impulsador no cuenta con stock disponible de premios físicos para girar la ruleta.");
+        }
+
+        // 4. Selección aleatoria ponderada (Weighted Random) entre premios físicos
         int totalPeso = inventariosDisponibles.stream()
                 .mapToInt(inv -> Math.max(1, inv.getPremioRuleta().getProbabilidadPeso()))
                 .sum();
@@ -119,7 +159,7 @@ public class RuletaService {
             inventarioGanador = inventariosDisponibles.get(0);
         }
 
-        // 4. Bloqueo pesimista para actualización atómica del stock por ID de asignación
+        // 5. Bloqueo pesimista para actualización atómica del stock por ID de asignación
         InventarioImpulsador invLocked = inventarioImpulsadorRepository
                 .findByIdForUpdate(inventarioGanador.getId())
                 .orElseThrow(() -> new IllegalStateException("No se pudo obtener el bloqueo de inventario del premio."));
@@ -128,20 +168,18 @@ public class RuletaService {
             throw new IllegalStateException("El stock del premio seleccionado se agotó en este instante. Vuelva a intentar el giro.");
         }
 
-        // Descontar stock
+        // Descontar stock físico
         invLocked.setCantidadEntregada(invLocked.getCantidadEntregada() + 1);
         invLocked.calculateSaldo();
         inventarioImpulsadorRepository.save(invLocked);
 
-        // 5. Crear la entrega de ruleta
-        CampanaCliente campana = campanaClienteRepository.findById(campanaId)
-                .orElseThrow(() -> new IllegalArgumentException("Campaña no encontrada: " + campanaId));
-
+        // 6. Crear la entrega de ruleta con premio físico
+        Long finalImpulsadorId = usuarioId != null ? usuarioId : (vendedorId != null ? vendedorId : 0L);
         EntregaRuleta entrega = EntregaRuleta.builder()
                 .registroCliente(registro)
                 .campanaCliente(campana)
                 .premioRuleta(invLocked.getPremioRuleta())
-                .impulsadorId(impulsadorId)
+                .impulsadorId(finalImpulsadorId)
                 .impulsadorNombre(impulsadorNombre)
                 .fechaGiro(LocalDateTime.now())
                 .revertido(false)
@@ -158,6 +196,16 @@ public class RuletaService {
         );
 
         return entrega;
+    }
+
+    @Transactional
+    public EntregaRuleta girarRuletaYAsignarPremio(
+            Long campanaId,
+            Long registroClienteId,
+            Long impulsadorId,
+            String impulsadorNombre
+    ) {
+        return girarRuletaYAsignarPremio(campanaId, registroClienteId, impulsadorId, impulsadorId, impulsadorNombre, null);
     }
 
     /**

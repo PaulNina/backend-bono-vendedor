@@ -300,7 +300,8 @@ public class RegistroClienteService {
         if (cantTickets > 0) {
             int year = LocalDate.now().getYear();
             for (int i = 1; i <= cantTickets; i++) {
-                String codigoTicket = String.format("SKY-%d-%06d-%d", year, registro.getId(), i);
+                Long correlativo = ticketClienteRepository.getNextCorrelativoTicket();
+                String codigoTicket = String.format("SKY-%d-%07d", year, correlativo);
                 TicketCliente ticket = TicketCliente.builder()
                         .codigoTicket(codigoTicket)
                         .registroCliente(registro)
@@ -448,8 +449,9 @@ public class RegistroClienteService {
                     int year = r.getFechaCompra() != null ? r.getFechaCompra().getYear() : LocalDate.now().getYear();
                     List<TicketCliente> nuevos = new ArrayList<>();
                     for (int i = 1; i <= cantTickets; i++) {
+                        Long correlativo = ticketClienteRepository.getNextCorrelativoTicket();
                         nuevos.add(TicketCliente.builder()
-                                .codigoTicket(String.format("SKY-%d-%06d-%d", year, r.getId(), i))
+                                .codigoTicket(String.format("SKY-%d-%07d", year, correlativo))
                                 .registroCliente(r)
                                 .campanaCliente(r.getCampanaCliente())
                                 .clienteCi(r.getCi() != null ? r.getCi().trim() : "")

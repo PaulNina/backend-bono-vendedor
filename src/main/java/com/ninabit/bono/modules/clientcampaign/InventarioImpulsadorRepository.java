@@ -21,6 +21,22 @@ public interface InventarioImpulsadorRepository extends JpaRepository<Inventario
 
     List<InventarioImpulsador> findByCampanaClienteIdAndUsuarioId(Long campanaClienteId, Long usuarioId);
 
+    @Query("SELECT i FROM InventarioImpulsador i WHERE i.campanaCliente.id = :campanaClienteId AND (" +
+           "( :usuarioId IS NOT NULL AND i.usuarioId = :usuarioId ) OR " +
+           "( :vendedorId IS NOT NULL AND i.vendedorId = :vendedorId ) OR " +
+           "( :usuarioId IS NOT NULL AND i.vendedorId = :usuarioId ) OR " +
+           "( :vendedorId IS NOT NULL AND i.usuarioId = :vendedorId ) OR " +
+           "( :nombreCompleto IS NOT NULL AND LOWER(TRIM(i.nombreDestinatario)) = LOWER(TRIM(:nombreCompleto)) ) OR " +
+           "( :tiendaId IS NOT NULL AND i.tiendaId = :tiendaId )" +
+           ") AND i.saldo > 0")
+    List<InventarioImpulsador> findAvailableByCampanaAndUser(
+            @org.springframework.data.repository.query.Param("campanaClienteId") Long campanaClienteId,
+            @org.springframework.data.repository.query.Param("usuarioId") Long usuarioId,
+            @org.springframework.data.repository.query.Param("vendedorId") Long vendedorId,
+            @org.springframework.data.repository.query.Param("nombreCompleto") String nombreCompleto,
+            @org.springframework.data.repository.query.Param("tiendaId") Long tiendaId
+    );
+
     @Query("SELECT i FROM InventarioImpulsador i WHERE i.campanaCliente.id = :campanaClienteId AND (i.vendedorId = :operadorId OR i.usuarioId = :operadorId) AND i.saldo > 0")
     List<InventarioImpulsador> findAvailableByCampanaAndVendedor(Long campanaClienteId, Long operadorId);
 

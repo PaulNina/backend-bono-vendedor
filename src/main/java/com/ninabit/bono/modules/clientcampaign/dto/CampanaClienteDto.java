@@ -23,6 +23,8 @@ public class CampanaClienteDto {
     private boolean activo;
     private boolean registroHabilitado;
     private boolean ruletaHabilitada;
+    private boolean ruletaSigaParticipandoHabilitado;
+    private Integer ruletaSigaParticipandoPorcentaje;
     private boolean webHabilitada;
     private boolean chatbotHabilitado;
     private BigDecimal premioFinalMonto;
@@ -42,6 +44,8 @@ public class CampanaClienteDto {
                 .activo(c.isActivo())
                 .registroHabilitado(c.isRegistroHabilitado())
                 .ruletaHabilitada(c.isRuletaHabilitada())
+                .ruletaSigaParticipandoHabilitado(c.isRuletaSigaParticipandoHabilitado())
+                .ruletaSigaParticipandoPorcentaje(c.getRuletaSigaParticipandoPorcentaje() != null ? c.getRuletaSigaParticipandoPorcentaje() : 20)
                 .webHabilitada(c.isWebHabilitada())
                 .chatbotHabilitado(c.isChatbotHabilitado())
                 .premioFinalMonto(c.getPremioFinalMonto())

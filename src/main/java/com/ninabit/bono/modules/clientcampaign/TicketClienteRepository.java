@@ -32,6 +32,9 @@ public interface TicketClienteRepository extends JpaRepository<TicketCliente, Lo
 
     Optional<TicketCliente> findByCodigoTicket(String codigoTicket);
 
+    @Query(value = "SELECT nextval('seq_ticket_cliente_codigo')", nativeQuery = true)
+    Long getNextCorrelativoTicket();
+
     @Query("SELECT t FROM TicketCliente t WHERE t.campanaCliente.id = :campanaId AND t.estado = com.ninabit.bono.modules.clientcampaign.TicketCliente.EstadoTicket.HABILITADO AND t.excluidoQuincenal = false")
     List<TicketCliente> findEligibleForFortnightRaffle(Long campanaId);
 

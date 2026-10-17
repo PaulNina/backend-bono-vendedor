@@ -44,6 +44,10 @@ public class PremioRuleta {
     @Builder.Default
     private boolean activo = true;
 
+    @Column(name = "es_sin_premio")
+    @Builder.Default
+    private boolean esSinPremio = false;
+
     @Column(name = "orden_ruleta")
     @Builder.Default
     private Integer ordenRuleta = 0;

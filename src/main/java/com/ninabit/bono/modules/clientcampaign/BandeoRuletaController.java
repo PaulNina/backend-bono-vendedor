@@ -34,18 +34,24 @@ public class BandeoRuletaController {
     private final RegistroClienteRepository registroClienteRepository;
     private final EntregaRuletaRepository entregaRuletaRepository;
 
-    private Long getUsuarioId(Authentication auth) {
-        if (auth == null) return null;
-        return usuarioRepository.findByEmail(auth.getName())
-                .map(Usuario::getId)
+    private Usuario getUsuario(Authentication auth) {
+        if (auth == null || auth.getName() == null) return null;
+        String email = auth.getName().trim();
+        return usuarioRepository.findByEmail(email)
+                .or(() -> usuarioRepository.findByEmail(email.toLowerCase()))
+                .or(() -> usuarioRepository.findByEmailAndActivoTrue(email))
                 .orElse(null);
     }
 
+    private Long getUsuarioId(Authentication auth) {
+        Usuario u = getUsuario(auth);
+        return u != null ? u.getId() : null;
+    }
+
     private Long getVendedorId(Authentication auth) {
-        if (auth == null) return null;
-        return usuarioRepository.findByEmail(auth.getName())
-                .map(u -> u.getVendedorId() != null ? u.getVendedorId() : u.getId())
-                .orElse(null);
+        Usuario u = getUsuario(auth);
+        if (u == null) return null;
+        return u.getVendedorId() != null ? u.getVendedorId() : u.getId();
     }
 
     @GetMapping("/premios-disponibles")
@@ -54,22 +60,26 @@ public class BandeoRuletaController {
             @RequestParam(required = false) Long campanaId,
             Authentication auth
     ) {
-        Long vendedorId = getVendedorId(auth);
-        if (vendedorId == null) {
-            return ResponseEntity.badRequest().body(Collections.emptyList());
-        }
+        Usuario usuario = getUsuario(auth);
+        Long usuarioId = usuario != null ? usuario.getId() : null;
+        Long vendedorId = usuario != null && usuario.getVendedorId() != null ? usuario.getVendedorId() : usuarioId;
+        String nombreCompleto = usuario != null ? usuario.getNombreCompleto() : null;
+        Long tiendaId = usuario != null ? usuario.getTiendaId() : null;
 
         if (campanaId == null) {
             campanaId = campanaClienteRepository.findCurrentActiveCampaign(LocalDate.now())
+                    .or(() -> campanaClienteRepository.findByActivoTrue().stream().findFirst())
                     .map(CampanaCliente::getId)
-                    .orElse(null);
+                    .orElse(1L);
         }
 
-        if (campanaId == null) {
-            return ResponseEntity.ok(Collections.emptyList());
-        }
-
-        List<Map<String, Object>> premios = ruletaService.obtenerPremiosDisponiblesParaRuleta(campanaId, vendedorId);
+        List<Map<String, Object>> premios = ruletaService.obtenerPremiosDisponiblesParaRuleta(
+                campanaId,
+                usuarioId,
+                vendedorId,
+                nombreCompleto,
+                tiendaId
+        );
         return ResponseEntity.ok(premios);
     }
 
@@ -97,8 +107,13 @@ public class BandeoRuletaController {
             Authentication auth
     ) {
         try {
-            Long vendedorId = getVendedorId(auth);
-            String impulsadorNombre = auth != null ? auth.getName() : "IMPULSADOR";
+            Usuario usuario = getUsuario(auth);
+            Long usuarioId = usuario != null ? usuario.getId() : null;
+            Long vendedorId = usuario != null && usuario.getVendedorId() != null ? usuario.getVendedorId() : usuarioId;
+            String impulsadorNombre = usuario != null && usuario.getNombreCompleto() != null && !usuario.getNombreCompleto().isBlank()
+                    ? usuario.getNombreCompleto()
+                    : (auth != null ? auth.getName() : "IMPULSADOR");
+            Long tiendaId = usuario != null ? usuario.getTiendaId() : null;
 
             // 1. Guardar registro de cliente
             RegistroCliente registro = registroClienteService.registrarCompraCliente(
@@ -125,13 +140,32 @@ public class BandeoRuletaController {
                     fotoCiReverso
             );
 
-            // 2. Ejecutar giro de ruleta y descontar stock automáticamente
+            // 2. Ejecutar giro de ruleta y descontar stock automáticamente si corresponde premio físico
             EntregaRuleta entrega = ruletaService.girarRuletaYAsignarPremio(
                     campanaId,
                     registro.getId(),
+                    usuarioId,
                     vendedorId,
-                    impulsadorNombre
+                    impulsadorNombre,
+                    tiendaId
             );
+
+            if (entrega == null) {
+                // Siga Participando: NO genera entrega física ni descuenta inventario
+                Map<String, Object> resp = new HashMap<>();
+                resp.put("success", true);
+                resp.put("registroId", registro.getId());
+                resp.put("entregaId", null);
+                resp.put("resultado", "SIGA_PARTICIPANDO");
+                Map<String, Object> premioSiga = new HashMap<>();
+                premioSiga.put("id", -1L);
+                premioSiga.put("nombre", "¡Sigue participando!");
+                premioSiga.put("descripcion", "Gran Sorteo Nacional Skyworth Bs 100.000");
+                premioSiga.put("colorHex", "#1e293b");
+                premioSiga.put("esSinPremio", true);
+                resp.put("premioGanado", premioSiga);
+                return ResponseEntity.ok(resp);
+            }
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -242,14 +276,27 @@ public class BandeoRuletaController {
             map.put("fotoCiReverso", r.getFotoCiReverso());
             map.put("createdAt", r.getCreatedAt());
 
-            entregaRuletaRepository.findByRegistroClienteId(r.getId()).ifPresent(entrega -> {
+            entregaRuletaRepository.findByRegistroClienteId(r.getId()).ifPresentOrElse(entrega -> {
+                boolean esSinPremio = entrega.getPremioRuleta() != null && entrega.getPremioRuleta().isEsSinPremio();
                 map.put("entregaId", entrega.getId());
                 map.put("premioNombre", entrega.getPremioRuleta() != null ? entrega.getPremioRuleta().getNombre() : null);
                 map.put("premioImagen", entrega.getPremioRuleta() != null ? entrega.getPremioRuleta().getImagenUrl() : null);
                 map.put("premioColor", entrega.getPremioRuleta() != null ? entrega.getPremioRuleta().getColorHex() : null);
-                map.put("premioEntregado", entrega.getFotoEntrega() != null && !entrega.getFotoEntrega().isBlank());
+                map.put("esSinPremio", esSinPremio);
+                map.put("premioEntregado", esSinPremio || (entrega.getFotoEntrega() != null && !entrega.getFotoEntrega().isBlank()));
                 map.put("revertido", entrega.isRevertido());
                 map.put("fotoEntrega", entrega.getFotoEntrega());
+            }, () -> {
+                if (r.getCanalRegistro() == RegistroCliente.CanalRegistro.BANDEO) {
+                    map.put("entregaId", null);
+                    map.put("premioNombre", "¡Sigue participando!");
+                    map.put("premioImagen", null);
+                    map.put("premioColor", "#334155");
+                    map.put("esSinPremio", true);
+                    map.put("premioEntregado", true);
+                    map.put("revertido", false);
+                    map.put("fotoEntrega", null);
+                }
             });
 
             return map;

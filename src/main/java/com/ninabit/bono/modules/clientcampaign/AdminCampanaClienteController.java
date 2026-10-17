@@ -433,6 +433,7 @@ public class AdminCampanaClienteController {
     @Operation(summary = "Consultar consolidado de inventarios por campaña")
     public List<InventarioImpulsadorDto> consultarInventarios(@PathVariable Long campanaId) {
         return inventarioImpulsadorRepository.findByCampanaClienteIdOrderByIdDesc(campanaId).stream()
+                .filter(i -> i.getPremioRuleta() == null || !i.getPremioRuleta().isEsSinPremio())
                 .map(InventarioImpulsadorDto::fromEntity)
                 .toList();
     }

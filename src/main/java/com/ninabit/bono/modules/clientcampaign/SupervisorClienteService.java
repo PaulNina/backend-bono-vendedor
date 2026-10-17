@@ -123,6 +123,34 @@ public class SupervisorClienteService {
         RegistroCliente reg = registroClienteRepository.findById(registroId)
                 .orElseThrow(() -> new IllegalArgumentException("Registro no encontrado con ID: " + registroId));
 
+        // Obtener tickets vinculados al registro
+        List<TicketCliente> tickets = ticketClienteRepository.findByRegistroClienteId(registroId);
+
+        // Si el registro no tenía tickets generados previamente, intentar generarlos ahora en estado HABILITADO
+        if (tickets == null || tickets.isEmpty()) {
+            tickets = generarTicketsParaRegistro(reg, TicketCliente.EstadoTicket.HABILITADO);
+        } else {
+            // Si ya existían, habilitarlos para participar en sorteos
+            ticketClienteRepository.updateEstadoByRegistroId(
+                    registroId, TicketCliente.EstadoTicket.HABILITADO
+            );
+            // Refrescar lista de tickets con estado actualizado
+            tickets = ticketClienteRepository.findByRegistroClienteId(registroId);
+        }
+
+        // VALIDACIÓN CRÍTICA: No permitir aprobar un registro si no tiene tickets válidos en la campaña
+        if (tickets == null || tickets.isEmpty()) {
+            throw new IllegalStateException(String.format(
+                    "No se puede aprobar el registro ID %d (Serial: %s, Modelo: %s) porque no genera tickets de sorteo. " +
+                    "Verifique que el modelo/producto esté configurado en la campaña con tickets > 0, o marque el registro como OBSERVADO.",
+                    registroId,
+                    reg.getSerial(),
+                    reg.getProductoModelo() != null ? reg.getProductoModelo() : "Sin modelo"
+            ));
+        }
+
+        int ticketsHabilitados = tickets.size();
+
         RegistroCliente.EstadoRegistro estadoPrevio = reg.getEstado();
         reg.setEstado(RegistroCliente.EstadoRegistro.APROBADO);
         reg.setSupervisorId(supervisorId);
@@ -136,24 +164,10 @@ public class SupervisorClienteService {
 
         RegistroCliente saved = registroClienteRepository.save(reg);
 
-        // Habilitar todos los tickets vinculados a este registro para participar en sorteos
-        int ticketsHabilitados = ticketClienteRepository.updateEstadoByRegistroId(
-                registroId, TicketCliente.EstadoTicket.HABILITADO
-        );
-
-        // Obtener códigos de tickets reales asignados al cliente
-        List<TicketCliente> tickets = ticketClienteRepository.findByRegistroClienteId(registroId);
-
-        // Si el registro no tenía tickets generados previamente, generarlos y habilitarlos ahora mismo
-        if (tickets == null || tickets.isEmpty()) {
-            tickets = generarTicketsParaRegistro(saved, TicketCliente.EstadoTicket.HABILITADO);
-            ticketsHabilitados = tickets.size();
-        }
-
-        String numerosTicketStr = tickets != null ? tickets.stream()
+        String numerosTicketStr = tickets.stream()
                 .map(TicketCliente::getCodigoTicket)
                 .filter(Objects::nonNull)
-                .collect(java.util.stream.Collectors.joining(", ")) : "";
+                .collect(java.util.stream.Collectors.joining(", "));
 
         auditoriaService.log(
                 supervisorNombre,
@@ -166,27 +180,30 @@ public class SupervisorClienteService {
         // Parámetro 4 de WhatsApp: Enviar los códigos reales de tickets generados
         String campo4Tickets = !numerosTicketStr.isBlank()
                 ? numerosTicketStr
-                : String.valueOf(Math.max(0, ticketsHabilitados));
+                : String.valueOf(ticketsHabilitados);
 
         String detalleTicketsWA = !numerosTicketStr.isBlank()
                 ? numerosTicketStr
                 : String.valueOf(ticketsHabilitados);
 
-        notificarClienteWAInteligente(saved, "skyworth_registro_aprobado",
-                List.of(
-                        reg.getNombreCliente(),
-                        reg.getProductoModelo() != null ? reg.getProductoModelo() : "Televisor Skyworth",
-                        reg.getSerial(),
-                        campo4Tickets
-                ),
-                String.format(
-                        "🎉 ¡Felicidades %s! Tu compra de TV Skyworth (Serial: %s) ha sido APROBADA exitosamente.\n\n" +
-                        "🎟️ Tickets generados: %s\n\n" +
-                        "Consulta y realiza el seguimiento de tus tickets oficiales en:\n" +
-                        "https://bono.skyworth.bo/mis-tickets",
-                        reg.getNombreCliente(), reg.getSerial(), detalleTicketsWA
-                )
-        );
+        // Enviar WhatsApp al cliente únicamente si hay tickets válidos asignados
+        if (ticketsHabilitados > 0 && !campo4Tickets.equals("0")) {
+            notificarClienteWAInteligente(saved, "skyworth_registro_aprobado",
+                    List.of(
+                            reg.getNombreCliente(),
+                            reg.getProductoModelo() != null ? reg.getProductoModelo() : "Televisor Skyworth",
+                            reg.getSerial(),
+                            campo4Tickets
+                    ),
+                    String.format(
+                            "🎉 ¡Felicidades %s! Tu compra de TV Skyworth (Serial: %s) ha sido APROBADA exitosamente.\n\n" +
+                            "🎟️ Tickets generados: %s\n\n" +
+                            "Consulta y realiza el seguimiento de tus tickets oficiales en:\n" +
+                            "https://bono.skyworth.bo/mis-tickets",
+                            reg.getNombreCliente(), reg.getSerial(), detalleTicketsWA
+                    )
+            );
+        }
 
         // Segundo correo con lista de tickets asignados
         String detalleTicketsEmail = numerosTicketStr.isBlank()
@@ -662,7 +679,8 @@ public class SupervisorClienteService {
         int year = reg.getFechaCompra() != null ? reg.getFechaCompra().getYear() : LocalDate.now().getYear();
         List<TicketCliente> lista = new ArrayList<>();
         for (int i = 1; i <= cantTickets; i++) {
-            String codigoTicket = String.format("SKY-%d-%06d-%d", year, reg.getId(), i);
+            Long correlativo = ticketClienteRepository.getNextCorrelativoTicket();
+            String codigoTicket = String.format("SKY-%d-%07d", year, correlativo);
             TicketCliente t = TicketCliente.builder()
                     .codigoTicket(codigoTicket)
                     .registroCliente(reg)

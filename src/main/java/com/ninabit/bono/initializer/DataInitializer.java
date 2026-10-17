@@ -51,9 +51,24 @@ public class DataInitializer implements CommandLineRunner {
                 seedCities();
                 seedFallas();
                 seedUsers();
-                autoRepararTicketsRegistros();
+                migrateSigaParticipandoColumns();
                 syncPostgresSequences();
+                autoRepararTicketsRegistros();
                 log.info("DataInitializer: Inicialización completada.");
+        }
+
+        private void migrateSigaParticipandoColumns() {
+                try {
+                        jdbcTemplate.execute("ALTER TABLE campanas_cliente ADD COLUMN IF NOT EXISTS ruleta_siga_participando_habilitado BOOLEAN DEFAULT false;");
+                        jdbcTemplate.execute("ALTER TABLE campanas_cliente ADD COLUMN IF NOT EXISTS ruleta_siga_participando_porcentaje INTEGER DEFAULT 20;");
+                        jdbcTemplate.execute("ALTER TABLE premios_ruleta ADD COLUMN IF NOT EXISTS es_sin_premio BOOLEAN DEFAULT false;");
+                        jdbcTemplate.execute("UPDATE campanas_cliente SET ruleta_siga_participando_habilitado = false WHERE ruleta_siga_participando_habilitado IS NULL;");
+                        jdbcTemplate.execute("UPDATE campanas_cliente SET ruleta_siga_participando_porcentaje = 20 WHERE ruleta_siga_participando_porcentaje IS NULL;");
+                        jdbcTemplate.execute("UPDATE premios_ruleta SET es_sin_premio = false WHERE es_sin_premio IS NULL;");
+                        log.info("DataInitializer: Columnas ruleta_siga_participando verificadas y sincronizadas.");
+                } catch (Exception e) {
+                        log.debug("Migración de columnas ruleta_siga_participando omitida: {}", e.getMessage());
+                }
         }
 
         private void seedRolesPermisos() {
@@ -333,6 +348,15 @@ public class DataInitializer implements CommandLineRunner {
 
         private void syncPostgresSequences() {
                 try {
+                        try {
+                                jdbcTemplate.execute("CREATE SEQUENCE IF NOT EXISTS seq_ticket_cliente_codigo START WITH 1;");
+                                jdbcTemplate.execute(
+                                                "SELECT setval('seq_ticket_cliente_codigo', GREATEST(COALESCE((SELECT MAX(id) FROM tickets_cliente), 0), (SELECT last_value FROM seq_ticket_cliente_codigo)), true);"
+                                );
+                        } catch (Exception e) {
+                                log.debug("Secuencia seq_ticket_cliente_codigo: {}", e.getMessage());
+                        }
+
                         List<String> tables = List.of(
                                         "usuarios", "ciudades", "tiendas", "vendedores", "ventas",
                                         "campanas", "producto", "tipo_producto", "pagos", "auditoria",
@@ -363,7 +387,7 @@ public class DataInitializer implements CommandLineRunner {
                         String sql =
                                 "INSERT INTO tickets_cliente (codigo_ticket, registro_cliente_id, campana_cliente_id, cliente_ci, cliente_nombre, cliente_celular, serial, producto_modelo, estado, excluido_quincenal, created_at) " +
                                 "SELECT " +
-                                "  'SKY-' || EXTRACT(YEAR FROM COALESCE(r.fecha_compra, CURRENT_DATE)) || '-' || LPAD(r.id::text, 6, '0') || '-1', " +
+                                "  'SKY-' || EXTRACT(YEAR FROM COALESCE(r.fecha_compra, CURRENT_DATE)) || '-' || LPAD(nextval('seq_ticket_cliente_codigo')::text, 7, '0'), " +
                                 "  r.id, " +
                                 "  r.campana_cliente_id, " +
                                 "  COALESCE(TRIM(r.ci), ''), " +
